@@ -162,8 +162,7 @@ impl State {
 mod tests {
     use super::*;
     use crate::cards::{COPPER, ESTATE};
-
-    const N_TEST_SEEDS: u64 = 100;
+    use proptest::prelude::*;
 
     fn assert_can_play_action(state: &State, action: Action, can_play: bool) {
         assert_eq!(can_play_action(state, action), can_play);
@@ -174,24 +173,24 @@ mod tests {
         actions.contains(&(action, true))
     }
 
-    #[test]
-    fn test_sanity() {
-        let state = State::new_default(0);
-        assert_eq!(state.ply, 0);
-        assert_eq!(state.hand.len(), 5);
-        assert_eq!(state.draw.len(), 5);
-        assert_eq!(state.discard.len(), 0);
-        assert_can_play_action(&state, Action::EndTurn, true);
-        let state = state.apply(Action::EndTurn);
-        assert_eq!(state.ply, 1);
-        assert_eq!(state.hand.len(), 5);
-        assert_eq!(state.draw.len(), 0);
-        assert_eq!(state.discard.len(), 5);
-    }
+    proptest! {
+        #[test]
+        fn test_sanity(seed in 0..u64::MAX) {
+            let state = State::new_default(seed);
+            assert_eq!(state.ply, 0);
+            assert_eq!(state.hand.len(), 5);
+            assert_eq!(state.draw.len(), 5);
+            assert_eq!(state.discard.len(), 0);
+            assert_can_play_action(&state, Action::EndTurn, true);
+            let state = state.apply(Action::EndTurn);
+            assert_eq!(state.ply, 1);
+            assert_eq!(state.hand.len(), 5);
+            assert_eq!(state.draw.len(), 0);
+            assert_eq!(state.discard.len(), 5);
+        }
 
-    #[test]
-    fn test_buy_copper() {
-        for seed in 0..N_TEST_SEEDS {
+        #[test]
+        fn test_buy_copper(seed in 0..u64::MAX) {
             let state = State::new_default(seed);
             let unspent_gold = state.unspent_gold;
 
@@ -216,11 +215,9 @@ mod tests {
             assert_eq!(state.kingdom[&COPPER], 59);
             assert_eq!(state.kingdom[&ESTATE], 12);
         }
-    }
 
-    #[test]
-    fn test_buy_estate() {
-        for seed in 0..N_TEST_SEEDS {
+        #[test]
+        fn test_buy_estate(seed in 0..u64::MAX) {
             let state = State::new_default(seed);
             let unspent_gold = state.unspent_gold;
 
@@ -245,17 +242,16 @@ mod tests {
             assert_eq!(state.kingdom[&COPPER], 60);
             assert_eq!(state.kingdom[&ESTATE], 11);
         }
-    }
 
-    #[test]
-    fn test_victory() {
-        for seed in 0..N_TEST_SEEDS {
+        #[test]
+        fn test_victory(seed in 0..u64::MAX) {
             let mut state = State::new_default(seed);
             assert_eq!(state.is_terminal(), None);
 
+
             for _ in 0..100 {
                 if state.is_terminal().is_some() {
-                    return;
+                    return Ok(());
                 }
 
                 if can_play_action(&state, Action::Buy(&ESTATE)) {
@@ -267,7 +263,7 @@ mod tests {
                 state = state.apply(Action::EndTurn);
             }
 
-            panic!("Failed to reach victory in {} turns", state.ply);
+            prop_assert!(false, "Failed to reach victory in {} turns", state.ply);
         }
     }
 }
