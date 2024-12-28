@@ -166,12 +166,12 @@ mod tests {
     const N_TEST_SEEDS: u64 = 100;
 
     fn assert_can_play_action(state: &State, action: Action, can_play: bool) {
+        assert_eq!(can_play_action(state, action), can_play);
+    }
+
+    fn can_play_action(state: &State, action: Action) -> bool {
         let actions = state.valid_actions();
-        assert!(
-            actions.contains(&(action, can_play)),
-            "Action {:?} is not valid",
-            action
-        );
+        actions.contains(&(action, true))
     }
 
     #[test]
@@ -244,6 +244,30 @@ mod tests {
             assert_eq!(state.kingdom.len(), 2);
             assert_eq!(state.kingdom[&COPPER], 60);
             assert_eq!(state.kingdom[&ESTATE], 11);
+        }
+    }
+
+    #[test]
+    fn test_victory() {
+        for seed in 0..N_TEST_SEEDS {
+            let mut state = State::new_default(seed);
+            assert_eq!(state.is_terminal(), None);
+
+            for _ in 0..100 {
+                if state.is_terminal().is_some() {
+                    return;
+                }
+
+                if can_play_action(&state, Action::Buy(&ESTATE)) {
+                    state = state.apply(Action::Buy(&ESTATE));
+                } else {
+                    assert_can_play_action(&state, Action::Buy(&COPPER), true);
+                    state = state.apply(Action::Buy(&COPPER));
+                }
+                state = state.apply(Action::EndTurn);
+            }
+
+            panic!("Failed to reach victory in {} turns", state.ply);
         }
     }
 }
