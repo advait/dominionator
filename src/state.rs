@@ -1,24 +1,10 @@
-use crate::cards::{Card, CARD_SET, DEFAULT_DECK, DEFAULT_KINGDOM, N_CARDS};
-use rand::{rngs::SmallRng, seq::SliceRandom, SeedableRng};
-use std::collections::{BTreeMap, VecDeque};
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Action {
-    EndTurn,
-    Buy(&'static Card),
-}
-
-// The ordering of ACTION_SET must be globally consistent across all games as we use the index of
-// actions within this array to indicate whether a given action is valid.
-static ACTION_SET: [Action; 1 + N_CARDS] = {
-    let mut actions = [Action::EndTurn; 1 + N_CARDS];
-    let mut i = 0;
-    while i < N_CARDS {
-        actions[1 + i] = Action::Buy(CARD_SET[i]);
-        i += 1;
-    }
-    actions
+use crate::{
+    actions::{Action, ACTION_SET, N_ACTIONS},
+    cards::{Card, DEFAULT_DECK, DEFAULT_KINGDOM},
+    types::Policy,
 };
+use rand::{rngs::SmallRng, seq::SliceRandom};
+use std::collections::{BTreeMap, VecDeque};
 
 type Ply = u8;
 
@@ -30,9 +16,8 @@ pub struct State {
     kingdom: BTreeMap<&'static Card, u8>,
     unspent_gold: u8,
     unspent_buys: u8,
-    ply: Ply,
+    pub ply: Ply,
     win_conditions: Vec<WinCondition>,
-    rng: SmallRng,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -44,10 +29,10 @@ impl State {
     const HAND_SIZE: usize = 5;
 
     pub fn new(
-        seed: u64,
         discard: &[&'static Card],
         kingdom: &[(&'static Card, u8)],
         win_conditions: &[WinCondition],
+        rng: &mut SmallRng,
     ) -> Self {
         let mut ret = Self {
             hand: VecDeque::default(),
@@ -58,23 +43,23 @@ impl State {
             unspent_buys: 1,
             ply: 0,
             win_conditions: win_conditions.to_vec(),
-            rng: SmallRng::seed_from_u64(seed),
         };
-        ret.draw(Self::HAND_SIZE);
+        ret.draw(Self::HAND_SIZE, rng);
 
         ret
     }
 
-    pub fn new_default(seed: u64) -> Self {
+    pub fn new_default(rng: &mut SmallRng) -> Self {
         Self::new(
-            seed,
             &DEFAULT_DECK,
             &DEFAULT_KINGDOM,
             &[WinCondition::Victory(10)],
+            rng,
         )
     }
 
-    fn new_turn(&mut self) -> &mut Self {
+    /// Increases the ply, discards the hand, draws a new hand, and resets gold/buys.
+    fn new_turn(&mut self, rng: &mut SmallRng) -> &mut Self {
         self.ply += 1;
 
         // Discard hand
@@ -82,7 +67,7 @@ impl State {
         self.hand.clear();
 
         // Draw new hand
-        self.draw(Self::HAND_SIZE);
+        self.draw(Self::HAND_SIZE, rng);
 
         // Reset unspent gold and buys
         self.unspent_gold = 0;
@@ -91,21 +76,25 @@ impl State {
         self
     }
 
-    fn reshuffle_discard(&mut self) -> &mut Self {
+    /// Reshuffles the discard pile into the draw pile.
+    fn reshuffle_discard(&mut self, rng: &mut SmallRng) -> &mut Self {
         let mut cards = self.discard.drain(..).collect::<Vec<_>>();
         cards.extend(self.draw.drain(..));
-        cards.shuffle(&mut self.rng);
+        cards.shuffle(&mut *rng);
         self.draw = VecDeque::from(cards);
         self
     }
 
-    fn draw(&mut self, n: usize) -> &mut Self {
+    /// Draws `n` cards from the draw pile into the hand.
+    /// If we run out of cards in the draw pile, we reshuffle the discard pile.
+    /// If we run out of cards in the discard pile, we return having drawn fewer than n.
+    fn draw(&mut self, n: usize, rng: &mut SmallRng) -> &mut Self {
         for _ in 0..n {
             if self.draw.is_empty() {
                 if self.discard.is_empty() {
                     return self;
                 }
-                self.reshuffle_discard();
+                self.reshuffle_discard(rng);
             }
 
             let card = self.draw.pop_front().unwrap();
@@ -116,19 +105,30 @@ impl State {
         self
     }
 
-    pub fn valid_actions(&self) -> Vec<(Action, bool)> {
-        ACTION_SET
-            .iter()
-            .map(|&action| match action {
-                Action::EndTurn => (action, true),
-                Action::Buy(card) => (
-                    action,
-                    self.unspent_gold >= card.cost && self.unspent_buys > 0,
-                ),
-            })
-            .collect()
+    /// For each possible action, returns a tuple of the action and whether it is valid or not.
+    pub fn valid_actions(&self) -> [(Action, bool); N_ACTIONS] {
+        ACTION_SET.map(|action| match action {
+            Action::EndTurn => (action, true),
+            Action::Buy(card) => (
+                action,
+                self.unspent_gold >= card.cost && self.unspent_buys > 0,
+            ),
+        })
     }
 
+    /// Mask the policy logprobs by setting illegal moves to [f32::NEG_INFINITY].
+    pub fn mask_policy(&self, policy_logprobs: &mut Policy) {
+        let valid_actions = self.valid_actions();
+
+        for i in 0..N_ACTIONS {
+            let (_, can_play) = valid_actions[i];
+            if !can_play {
+                policy_logprobs[i] = f32::NEG_INFINITY;
+            }
+        }
+    }
+
+    /// Returns the ply at which the game is terminal, or None if it is not terminal.
     pub fn is_terminal(&self) -> Option<Ply> {
         for &win_condition in self.win_conditions.iter() {
             match win_condition {
@@ -142,11 +142,12 @@ impl State {
         None
     }
 
-    pub fn apply(&self, action: Action) -> Self {
+    /// Applies an action to the state returning the resulting state.
+    pub fn apply_action(&self, action: Action, rng: &mut SmallRng) -> Self {
         let mut next = self.clone();
         match action {
             Action::EndTurn => {
-                next.new_turn();
+                next.new_turn(rng);
             }
             Action::Buy(card) => {
                 next.kingdom.entry(card).and_modify(|count| *count -= 1);
@@ -163,6 +164,7 @@ mod tests {
     use super::*;
     use crate::cards::{COPPER, ESTATE};
     use proptest::prelude::*;
+    use rand::SeedableRng;
 
     fn assert_can_play_action(state: &State, action: Action, can_play: bool) {
         assert_eq!(can_play_action(state, action), can_play);
@@ -176,13 +178,14 @@ mod tests {
     proptest! {
         #[test]
         fn test_sanity(seed in 0..u64::MAX) {
-            let state = State::new_default(seed);
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let state = State::new_default(&mut rng);
             assert_eq!(state.ply, 0);
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 5);
             assert_eq!(state.discard.len(), 0);
             assert_can_play_action(&state, Action::EndTurn, true);
-            let state = state.apply(Action::EndTurn);
+            let state = state.apply_action(Action::EndTurn, &mut rng);
             assert_eq!(state.ply, 1);
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 0);
@@ -191,12 +194,13 @@ mod tests {
 
         #[test]
         fn test_buy_copper(seed in 0..u64::MAX) {
-            let state = State::new_default(seed);
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let state = State::new_default(&mut rng);
             let unspent_gold = state.unspent_gold;
 
             // Buy a copper
             assert_can_play_action(&state, Action::Buy(&COPPER), true);
-            let state = state.apply(Action::Buy(&COPPER));
+            let state = state.apply_action(Action::Buy(&COPPER), &mut rng);
             assert_eq!(state.unspent_gold, unspent_gold - COPPER.cost);
             assert!(state.discard.contains(&&COPPER));
 
@@ -206,7 +210,7 @@ mod tests {
 
             // End turn
             assert_can_play_action(&state, Action::EndTurn, true);
-            let state = state.apply(Action::EndTurn);
+            let state = state.apply_action(Action::EndTurn, &mut rng);
             assert_eq!(state.ply, 1);
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 0);
@@ -218,12 +222,13 @@ mod tests {
 
         #[test]
         fn test_buy_estate(seed in 0..u64::MAX) {
-            let state = State::new_default(seed);
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let state = State::new_default(&mut rng);
             let unspent_gold = state.unspent_gold;
 
             // Buy an estate
             assert_can_play_action(&state, Action::Buy(&ESTATE), true);
-            let state = state.apply(Action::Buy(&ESTATE));
+            let state = state.apply_action(Action::Buy(&ESTATE), &mut rng);
             assert_eq!(state.unspent_gold, unspent_gold - ESTATE.cost);
             assert!(state.discard.contains(&&ESTATE));
 
@@ -233,7 +238,7 @@ mod tests {
 
             // End turn
             assert_can_play_action(&state, Action::EndTurn, true);
-            let state = state.apply(Action::EndTurn);
+            let state = state.apply_action(Action::EndTurn, &mut rng);
             assert_eq!(state.ply, 1);
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 0);
@@ -245,9 +250,9 @@ mod tests {
 
         #[test]
         fn test_victory(seed in 0..u64::MAX) {
-            let mut state = State::new_default(seed);
+            let mut rng = SmallRng::seed_from_u64(seed);
+            let mut state = State::new_default(&mut rng);
             assert_eq!(state.is_terminal(), None);
-
 
             for _ in 0..100 {
                 if state.is_terminal().is_some() {
@@ -255,12 +260,12 @@ mod tests {
                 }
 
                 if can_play_action(&state, Action::Buy(&ESTATE)) {
-                    state = state.apply(Action::Buy(&ESTATE));
+                    state = state.apply_action(Action::Buy(&ESTATE), &mut rng);
                 } else {
                     assert_can_play_action(&state, Action::Buy(&COPPER), true);
-                    state = state.apply(Action::Buy(&COPPER));
+                    state = state.apply_action(Action::Buy(&COPPER), &mut rng);
                 }
-                state = state.apply(Action::EndTurn);
+                state = state.apply_action(Action::EndTurn, &mut rng);
             }
 
             prop_assert!(false, "Failed to reach victory in {} turns", state.ply);
