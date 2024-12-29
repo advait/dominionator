@@ -1,5 +1,7 @@
 use crate::actions::N_ACTIONS;
 
+pub type Ply = u8;
+
 pub type QValue = f32;
 
 pub type Policy = [f32; N_ACTIONS];

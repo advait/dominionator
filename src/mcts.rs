@@ -9,6 +9,7 @@ use rand::{distributions::WeightedIndex, prelude::Distribution, rngs::SmallRng, 
 use crate::{
     actions::{Action, ACTION_SET, N_ACTIONS},
     state::State,
+    types::Ply,
     types::{policy_from_iter, Policy, QValue},
     utils::OrdF32,
 };
@@ -23,8 +24,7 @@ pub struct MCTS {
 
 impl MCTS {
     const UNIFORM_POLICY: Policy = [1.0 / N_ACTIONS as f32; N_ACTIONS];
-    const MAX_PLY: usize = 100;
-    const AVG_PLY: usize = 30;
+    const AVG_PLY: Ply = 30;
     const C_EXPLORATION: f32 = 8.0;
 
     pub fn new(state: State, seed: u64) -> Self {
@@ -40,7 +40,7 @@ impl MCTS {
     pub fn on_received_nn_est(&mut self, q_est: QValue, mut policy_logprobs_est: Policy) {
         let leaf = self.leaf.borrow();
 
-        if let Some(q_actual) = leaf.get_terminal_q_value(MCTS::MAX_PLY, MCTS::AVG_PLY) {
+        if let Some(q_actual) = leaf.get_terminal_q_value(State::MAX_PLY, MCTS::AVG_PLY) {
             drop(leaf); // Drop leaf borrow so we can reassign self.leaf
 
             // If this is a terminal state, the received policy is irrelevant.
@@ -224,20 +224,22 @@ impl Node {
 
     /// Returns the Q value of the terminal state between [-1, 1].
     /// Returns None if the state is not terminal.
-    fn get_terminal_q_value(&self, max_ply: usize, avg_ply: usize) -> Option<QValue> {
+    fn get_terminal_q_value(&self, max_ply: u8, avg_ply: u8) -> Option<QValue> {
         if self.state.is_terminal().is_some() {
             return None;
         }
-        let ply = self.state.ply as usize;
+        let ply = self.state.ply as f32;
+        let avg_ply = avg_ply as f32;
+        let max_ply = max_ply as f32;
 
         // For wins/losses, map ply from [0, max_ply] to [-1, 1]
         // with avg_ply mapping to 0
         let score = if ply <= avg_ply {
             // Early segment: map [0, avg_ply] to [1, 0]
-            1.0 - (ply as f32 / avg_ply as f32)
+            1.0 - (ply / avg_ply)
         } else {
             // Late segment: map [avg_ply, max_ply] to [0, -1]
-            -((ply - avg_ply) as f32) / ((max_ply - avg_ply) as f32)
+            -(ply - avg_ply) / (max_ply - avg_ply)
         };
         Some(score)
     }

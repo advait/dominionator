@@ -1,18 +1,16 @@
 use crate::{
     actions::{Action, ACTION_SET, N_ACTIONS},
     cards::{Card, DEFAULT_DECK, DEFAULT_KINGDOM},
-    types::Policy,
+    types::{Ply, Policy},
 };
 use rand::{rngs::SmallRng, seq::SliceRandom};
-use std::collections::{BTreeMap, VecDeque};
-
-type Ply = u8;
+use std::collections::BTreeMap;
 
 #[derive(Debug, Clone)]
 pub struct State {
-    hand: VecDeque<&'static Card>,
-    draw: VecDeque<&'static Card>,
-    discard: VecDeque<&'static Card>,
+    hand: Vec<&'static Card>,
+    draw: Vec<&'static Card>,
+    discard: Vec<&'static Card>,
     kingdom: BTreeMap<&'static Card, u8>,
     unspent_gold: u8,
     unspent_buys: u8,
@@ -26,7 +24,11 @@ pub enum WinCondition {
 }
 
 impl State {
+    /// The number of cards we draw at the start of each turn.
     const HAND_SIZE: usize = 5;
+
+    /// The maximum number of plys. Games are terminal if they reach this number.
+    pub const MAX_PLY: Ply = 100;
 
     pub fn new(
         discard: &[&'static Card],
@@ -35,9 +37,9 @@ impl State {
         rng: &mut SmallRng,
     ) -> Self {
         let mut ret = Self {
-            hand: VecDeque::default(),
-            draw: VecDeque::default(),
-            discard: VecDeque::from_iter(discard.into_iter().cloned()),
+            hand: Vec::default(),
+            draw: Vec::default(),
+            discard: discard.to_vec(),
             kingdom: BTreeMap::from_iter(kingdom.into_iter().cloned()),
             unspent_gold: 0,
             unspent_buys: 1,
@@ -81,7 +83,7 @@ impl State {
         let mut cards = self.discard.drain(..).collect::<Vec<_>>();
         cards.extend(self.draw.drain(..));
         cards.shuffle(&mut *rng);
-        self.draw = VecDeque::from(cards);
+        self.draw = cards;
         self
     }
 
@@ -97,9 +99,9 @@ impl State {
                 self.reshuffle_discard(rng);
             }
 
-            let card = self.draw.pop_front().unwrap();
+            let card = self.draw.pop().unwrap();
             self.unspent_gold += card.treasure;
-            self.hand.push_back(card);
+            self.hand.push(card);
         }
 
         self
@@ -130,6 +132,10 @@ impl State {
 
     /// Returns the ply at which the game is terminal, or None if it is not terminal.
     pub fn is_terminal(&self) -> Option<Ply> {
+        if self.ply >= Self::MAX_PLY {
+            return Some(self.ply);
+        }
+
         for &win_condition in self.win_conditions.iter() {
             match win_condition {
                 WinCondition::Victory(target_victory) => {
@@ -151,7 +157,7 @@ impl State {
             }
             Action::Buy(card) => {
                 next.kingdom.entry(card).and_modify(|count| *count -= 1);
-                next.discard.push_back(card);
+                next.discard.push(card);
                 next.unspent_gold -= card.cost;
                 next.unspent_buys -= 1;
             }
