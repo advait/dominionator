@@ -1,12 +1,16 @@
 use crate::{
     actions::{Action, ACTION_SET, N_ACTIONS},
     cards::{Card, DEFAULT_DECK, DEFAULT_KINGDOM},
-    types::{Ply, Policy},
+    policy::Policy,
+    types::Ply,
 };
 use rand::{rngs::SmallRng, seq::SliceRandom};
-use std::collections::BTreeMap;
+use std::{
+    collections::BTreeMap,
+    fmt::{Debug, Display, Formatter, Result},
+};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct State {
     hand: Vec<&'static Card>,
     draw: Vec<&'static Card>,
@@ -16,6 +20,45 @@ pub struct State {
     unspent_buys: u8,
     pub ply: Ply,
     win_conditions: Vec<WinCondition>,
+}
+
+impl Debug for State {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        write!(f, "{}", self)
+    }
+}
+
+impl Display for State {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result {
+        write!(
+            f,
+            "hand: {}\ndraw: {}\ndiscard: {}\nkingdom: {}\ngold {}, buys {}\nply {}\nterminal: {}",
+            self.hand
+                .iter()
+                .map(|card| card.short_name)
+                .collect::<Vec<_>>()
+                .join(" "),
+            self.draw
+                .iter()
+                .map(|card| card.short_name)
+                .collect::<Vec<_>>()
+                .join(" "),
+            self.discard
+                .iter()
+                .map(|card| card.short_name)
+                .collect::<Vec<_>>()
+                .join(" "),
+            self.kingdom
+                .iter()
+                .map(|(card, count)| format!("{} {}", card.short_name, count))
+                .collect::<Vec<_>>()
+                .join(", "),
+            self.unspent_gold,
+            self.unspent_buys,
+            self.ply,
+            self.is_terminal().is_some()
+        )
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -130,6 +173,14 @@ impl State {
         }
     }
 
+    pub fn victory_count(&self) -> u8 {
+        [&self.hand, &self.draw, &self.discard]
+            .into_iter()
+            .flatten()
+            .map(|card| card.victory)
+            .sum()
+    }
+
     /// Returns the ply at which the game is terminal, or None if it is not terminal.
     pub fn is_terminal(&self) -> Option<Ply> {
         if self.ply >= Self::MAX_PLY {
@@ -139,7 +190,7 @@ impl State {
         for &win_condition in self.win_conditions.iter() {
             match win_condition {
                 WinCondition::Victory(target_victory) => {
-                    if self.ply >= target_victory {
+                    if self.victory_count() >= target_victory {
                         return Some(self.ply);
                     }
                 }

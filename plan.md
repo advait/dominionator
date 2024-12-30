@@ -62,7 +62,11 @@ The game is over when either:
 2. Three separate piles are empty
 
 Once the game is over, the **Q value** of the state is the ply count. Our objective is to minimize
-the Q value.
+the Q value. Rather than use the raw ply count, we'll use the *inverse* of the ply count scaled
+to the range [-1, 1]. This inverse has the following properties:
+1. Q Value of 1 is the best possible outcome (win on the 0th ply)
+2. Q Value of -1 is the worst possible outcome (game ends after MAX_PLYS)
+3. Q Value of 0 is the average outcome (some value between 0 plys and MAX_PLYS)
 
 ### Player's Hand
 We would like to implement the network as a transformers variant so that we are able to learn card

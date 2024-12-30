@@ -9,6 +9,12 @@ impl Eq for OrdF32 {}
 /// Panics if the f32 is NaN.
 impl Ord for OrdF32 {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.partial_cmp(other).unwrap()
+        if self.0.is_nan() {
+            panic!("NaN value in OrdF32");
+        } else if other.0.is_nan() {
+            panic!("NaN value in OrdF32");
+        } else {
+            self.partial_cmp(other).unwrap()
+        }
     }
 }

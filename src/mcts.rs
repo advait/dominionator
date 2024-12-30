@@ -1,16 +1,15 @@
 use std::{
-    array,
     cell::RefCell,
     rc::{Rc, Weak},
 };
 
-use rand::{distributions::WeightedIndex, prelude::Distribution, rngs::SmallRng, SeedableRng};
+use rand::{distributions::WeightedIndex, prelude::Distribution, rngs::SmallRng};
 
 use crate::{
-    actions::{Action, ACTION_SET, N_ACTIONS},
+    actions::{action_to_idx, Action, ACTION_SET, N_ACTIONS},
+    policy::{apply_temperature, policy_from_iter, softmax, Policy},
     state::State,
-    types::Ply,
-    types::{policy_from_iter, Policy, QValue},
+    types::QValue,
     utils::OrdF32,
 };
 
@@ -24,105 +23,63 @@ pub struct MCTS {
 
 impl MCTS {
     const UNIFORM_POLICY: Policy = [1.0 / N_ACTIONS as f32; N_ACTIONS];
-    const AVG_PLY: Ply = 30;
-    const C_EXPLORATION: f32 = 8.0;
 
-    pub fn new(state: State, seed: u64) -> Self {
-        let root = Rc::new(RefCell::new(Node::new(state, 0.0)));
+    pub fn new(state: State, rng: SmallRng) -> Self {
+        let root = Rc::new(RefCell::new(Node::new(Weak::new(), state, 0.0)));
         Self {
             root: root.clone(),
             leaf: root,
             actions: Vec::new(),
-            rng: SmallRng::seed_from_u64(seed),
+            rng,
         }
     }
 
-    pub fn on_received_nn_est(&mut self, q_est: QValue, mut policy_logprobs_est: Policy) {
-        let leaf = self.leaf.borrow();
-
-        if let Some(q_actual) = leaf.get_terminal_q_value(State::MAX_PLY, MCTS::AVG_PLY) {
-            drop(leaf); // Drop leaf borrow so we can reassign self.leaf
-
-            // If this is a terminal state, the received policy is irrelevant.
-            // We backpropagate the objective terminal value and select a new leaf.
-            self.backpropagate(q_actual);
-            self.select_new_leaf();
-        } else {
-            // Mask the NN's policy to only include legal moves.
-            leaf.state.mask_policy(&mut policy_logprobs_est);
-            drop(leaf); // Drop leaf borrow so we can reassign self.leaf
-
-            // If this is a non-terminal state, we expand the leaf and backpropagate the NN
-            // estimate.
-            let policy_est = softmax(policy_logprobs_est);
-            self.expand_leaf(policy_est);
-            self.backpropagate(q_est);
-            self.select_new_leaf();
-        }
+    pub fn root_visit_count(&self) -> usize {
+        self.root.borrow().visit_count
     }
 
-    /// Expands the the leaf by adding child nodes to it which then be eligible for exploration via
-    /// subsequent MCTS iterations. Each child node's [Node::initial_policy_value] is determined by
-    /// the provided policy.
-    /// Noop for terminal nodes.
-    fn expand_leaf(&mut self, policy_probs: Policy) {
-        if self.leaf.borrow().state.is_terminal().is_some() {
-            return;
-        }
-        let legal_moves = self.leaf.borrow().state.valid_actions();
-
-        let children: [Option<Rc<RefCell<Node>>>; N_ACTIONS] = std::array::from_fn(|i| {
-            let (action, can_play) = legal_moves[i];
-            if can_play {
-                let child_state = self.leaf.borrow().state.apply_action(action, &mut self.rng);
-                let child = Node::new(child_state, policy_probs[i]);
-                Some(Rc::new(RefCell::new(child)))
-            } else {
-                None
-            }
-        });
+    pub fn on_received_nn_est(
+        &mut self,
+        q_est: QValue,
+        mut policy_logprobs_est: Policy,
+        c_exploration: f32,
+        max_ply: u8,
+        avg_ply: u8,
+    ) {
         let mut leaf = self.leaf.borrow_mut();
-        leaf.children = Some(children);
-    }
+        if let Some(q_actual) = leaf.get_terminal_q_value(max_ply, avg_ply) {
+            // If we've reached a terminal state, backpropagate the actual q value and attempt
+            // to select a new leaf node.
+            leaf.backpropagate(q_actual);
+            drop(leaf); // Drop leaf borrow so we can reassign self.leaf
 
-    /// Backpropagates the Q value up the tree, incrementing visit counts.
-    pub fn backpropagate(&mut self, q_value: QValue) {
-        let mut node_ref = Rc::clone(&self.leaf);
-        loop {
-            let mut node = node_ref.borrow_mut();
-            node.q_sum += q_value;
-            node.visit_count += 1;
+            self.select_new_leaf(c_exploration);
+        } else {
+            // Non-terminal state found, proceed with normal expansion
+            leaf.state.mask_policy(&mut policy_logprobs_est);
+            let policy_est = softmax(policy_logprobs_est);
+            leaf.expand(self.leaf.clone(), policy_est, &mut self.rng);
+            leaf.backpropagate(q_est);
 
-            if let Some(parent) = node.parent.upgrade() {
-                drop(node); // Drop node borrow so we can reassign node_ref
-                node_ref = parent;
-            } else {
-                break;
-            }
+            drop(leaf); // Drop leaf borrow so we can reassign self.leaf
+            self.select_new_leaf(c_exploration);
         }
     }
 
     /// Select the next leaf node by traversing from the root node, repeatedly selecting the child
     /// with the highest [Node::uct_value] until we reach a node with no expanded children (leaf
     /// node).
-    pub fn select_new_leaf(&mut self) {
+    pub fn select_new_leaf(&mut self, c_exploration: f32) {
         let mut node_ref = Rc::clone(&self.root);
         loop {
             let node = node_ref.borrow();
-            let children = node.children.as_ref().cloned();
-
-            if let Some(children) = children {
-                let max_child = children.iter().flatten().max_by_key(|&child| {
-                    let score = child.borrow().uct_value(MCTS::C_EXPLORATION);
-                    OrdF32(score)
-                });
-
-                if let Some(next) = max_child {
-                    drop(node); // Drop node borrow so we can reassign node_ref
-                    node_ref = Rc::clone(&next);
-                } else {
-                    break;
-                }
+            let best_child = node.best_child(c_exploration);
+            if let Some(best_child) = best_child {
+                drop(node); // Drop node borrow so we can reassign node_ref
+                node_ref = Rc::clone(&best_child);
+                // TODO: If this child is a terminal state, we can preemptively backpropagate
+                // the q value and select a new leaf node instead of waiting for the NN to
+                // evaluate a terminal position.
             } else {
                 break;
             }
@@ -133,12 +90,9 @@ impl MCTS {
 
     /// Makes a move, updating the root node to be the child node corresponding to the action.
     /// Stores the previous position and policy in the [Self::moves] vector.
-    pub fn make_move(&mut self, action: Action) {
+    pub fn make_move(&mut self, action: Action, c_exploration: f32) {
         let leaf = self.leaf.borrow_mut();
-        let child_idx = ACTION_SET
-            .iter()
-            .position(|&a| a == action)
-            .expect(format!("Action {:?} not in ACTION_SET", action).as_str());
+        let child_idx = action_to_idx(&action);
 
         let child = leaf
             .children
@@ -149,7 +103,7 @@ impl MCTS {
         self.root = Rc::clone(child);
 
         drop(leaf); // Drop leaf borrow so we can reassign self.leaf
-        self.select_new_leaf();
+        self.select_new_leaf(c_exploration);
         self.actions.push(action);
     }
 
@@ -158,12 +112,12 @@ impl MCTS {
     /// The temperature parameter scales the policy probabilities, with values > 1.0 making the
     /// sampled distribution more uniform and values < 1.0 making the sampled distribution favor
     /// the most lucrative moves.
-    pub fn make_random_move(&mut self, temperature: f32) {
+    pub fn make_random_move(&mut self, temperature: f32, c_exploration: f32) {
         let policy = self.root.borrow().policy();
         let policy = apply_temperature(&policy, temperature);
         let dist = WeightedIndex::new(policy).unwrap();
         let action = ACTION_SET[dist.sample(&mut self.rng)];
-        self.make_move(action);
+        self.make_move(action, c_exploration);
     }
 }
 
@@ -187,10 +141,10 @@ struct Node {
 impl Node {
     const EPS: f32 = 1e-8;
 
-    pub fn new(state: State, initial_policy_value: f32) -> Self {
+    pub fn new(parent: Weak<RefCell<Node>>, state: State, initial_policy_value: f32) -> Self {
         Self {
             state,
-            parent: Weak::new(),
+            parent,
             visit_count: 0,
             q_sum: 0.0,
             initial_policy_value,
@@ -200,7 +154,7 @@ impl Node {
 
     /// The exploitation component of the UCT value.
     pub fn q_value(&self) -> f32 {
-        self.q_sum / self.visit_count as f32
+        self.q_sum / (self.visit_count as f32 + 1.0)
     }
 
     /// The exploration component of the UCT value. Higher visit counts result in lower values.
@@ -225,7 +179,7 @@ impl Node {
     /// Returns the Q value of the terminal state between [-1, 1].
     /// Returns None if the state is not terminal.
     fn get_terminal_q_value(&self, max_ply: u8, avg_ply: u8) -> Option<QValue> {
-        if self.state.is_terminal().is_some() {
+        if self.state.is_terminal().is_none() {
             return None;
         }
         let ply = self.state.ply as f32;
@@ -242,6 +196,19 @@ impl Node {
             -(ply - avg_ply) / (max_ply - avg_ply)
         };
         Some(score)
+    }
+
+    /// Returns the child with the highest UCT value.
+    fn best_child(&self, c_exploration: f32) -> Option<Rc<RefCell<Node>>> {
+        self.children
+            .as_ref()?
+            .iter()
+            .flatten()
+            .max_by_key(|&child| {
+                let score = child.borrow().uct_value(c_exploration);
+                OrdF32(score)
+            })
+            .cloned()
     }
 
     /// Uses the child counts as weights to determine the implied policy from this position.
@@ -262,134 +229,132 @@ impl Node {
             MCTS::UNIFORM_POLICY
         }
     }
-}
 
-/// Softmax function for a policy.
-fn softmax(policy_logprobs: Policy) -> Policy {
-    let max = policy_logprobs
-        .iter()
-        .cloned()
-        .fold(f32::NEG_INFINITY, f32::max);
-    if max.is_infinite() {
-        // If the policy is all negative infinity, we fall back to uniform policy.
-        // This can happen if the NN dramatically underflows.
-        // We panic as this is an issue that should be fixed in the NN.
-        panic!("softmax: policy is all negative infinity, debug NN on why this is happening.");
-    }
-    let exps = policy_logprobs
-        .iter()
-        // Subtract max value to avoid overflow
-        .map(|p| (p - max).exp())
-        .collect::<Vec<_>>();
-    let sum = exps.iter().sum::<f32>();
-    array::from_fn(|i| exps[i] / sum)
-}
+    fn backpropagate(&mut self, q_value: QValue) {
+        self.q_sum += q_value;
+        self.visit_count += 1;
 
-/// Applies temperature scaling to a policy.
-/// Expects the policy to be in [0-1] (non-log) space.
-/// Temperature=0.0 is argmax, temperature=1.0 is a noop.
-pub fn apply_temperature(policy: &Policy, temperature: f32) -> Policy {
-    if temperature == 1.0 || policy.iter().all(|&p| p == policy[0]) {
-        // Temp 1.0 or uniform policy is noop
-        return policy.clone();
-    } else if temperature == 0.0 {
-        // Temp 0.0 is argmax
-        let max = policy.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-        let ret = policy.map(|p| if p == max { 1.0 } else { 0.0 });
-        let sum = ret.iter().sum::<f32>();
-        return ret.map(|p| p / sum); // Potentially multiple argmaxes
+        if let Some(parent) = self.parent.upgrade() {
+            parent.borrow_mut().backpropagate(q_value);
+        }
     }
 
-    let policy_log = policy.map(|p| p.ln() / temperature);
-    let policy_log_sum_exp = policy_log.map(|p| p.exp()).iter().sum::<f32>().ln();
-    policy_log.map(|p| (p - policy_log_sum_exp).exp().clamp(0.0, 1.0))
+    fn expand(&mut self, parent_ref: Rc<RefCell<Node>>, policy_probs: Policy, rng: &mut SmallRng) {
+        if self.children.is_some() {
+            panic!("expand called on node with children");
+        }
+
+        let legal_moves = self.state.valid_actions();
+        let children: [Option<Rc<RefCell<Node>>>; N_ACTIONS] = std::array::from_fn(|i| {
+            let (action, can_play) = legal_moves[i];
+            if can_play {
+                let child_state = self.state.apply_action(action, rng);
+                let child = Node::new(Rc::downgrade(&parent_ref), child_state, policy_probs[i]);
+                Some(Rc::new(RefCell::new(child)))
+            } else {
+                None
+            }
+        });
+        self.children = Some(children);
+    }
 }
 
 #[cfg(test)]
 mod tests {
+    use crate::{cards::*, policy::policy_value_for_action, state::WinCondition};
+
     use super::*;
-    use proptest::prelude::*;
+    use more_asserts::assert_gt;
+    use rand::SeedableRng;
 
-    const CONST_COL_WEIGHT: f32 = 1.0 / N_ACTIONS as f32;
+    #[test]
+    fn test_obvious_win() {
+        let c_exploration = 2.0;
+        let mut rng = SmallRng::seed_from_u64(1);
+        let state = State::new(
+            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
+            &[(&COPPER, 1), (&ESTATE, 1)],
+            &[WinCondition::Victory(1)],
+            &mut rng,
+        );
+        assert_eq!(state.is_terminal(), None);
+        let mut mcts = MCTS::new(state, rng);
 
-    /// Strategy for generating a policy with at least one non-zero value.
-    fn policy_strategy() -> impl Strategy<Value = Policy> {
-        let min = 0.0f32;
-        let max = 10.0f32;
-        let positive_strategy = min..max;
-        let neg_inf_strategy = Just(f32::NEG_INFINITY);
-        prop::array::uniform3(prop_oneof![positive_strategy, neg_inf_strategy])
-            .prop_filter("all neg infinity not allowed", |policy_logits| {
-                !policy_logits.iter().all(|&p| p == f32::NEG_INFINITY)
-            })
-            .prop_map(|policy_log| softmax(policy_log))
+        while mcts.root_visit_count() < 100 {
+            mcts.on_received_nn_est(0., MCTS::UNIFORM_POLICY, c_exploration, 5, 3);
+        }
+        let policy = mcts.root.borrow().policy();
+        assert_gt!(policy_value_for_action(&policy, &Action::Buy(&ESTATE)), 0.9);
     }
 
-    proptest! {
-        /// Softmax policies should sum up to one.
-        #[test]
-        fn softmax_sum_1(policy in policy_strategy()) {
-            assert_policy_sum_1(&policy);
-        }
+    #[test]
+    fn test_terminal_q_value() {
+        let mut rng = SmallRng::seed_from_u64(1);
+        let max_ply = 100;
+        let avg_ply = 30;
 
-        /// Temperature of 1.0 should not affect the policy.
-        #[test]
-        fn temperature_1(policy in policy_strategy()) {
-            let policy_with_temp = apply_temperature(&policy, 1.0);
-            assert_policy_eq(&policy, &policy_with_temp, 1e-5);
-        }
+        // Non-terminal state should return None
+        let non_terminal_state = State::new(
+            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
+            &[(&COPPER, 1), (&ESTATE, 1)],
+            &[WinCondition::Victory(100)],
+            &mut rng,
+        );
+        let node = Node::new(Weak::new(), non_terminal_state, 0.0);
+        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), None);
 
-        /// Temperature of 2.0 should change the policy.
-        #[test]
-        fn temperature_2(policy in policy_strategy()) {
-            let policy_with_temp = apply_temperature(&policy, 2.0);
-            assert_policy_sum_1(&policy_with_temp);
-            // If policy is nonuniform and there are at least two non-zero probabilities, the
-            // policy with temperature should be different from the original policy
-            if policy.iter().filter(|&&p| p != CONST_COL_WEIGHT && p > 0.0).count() >= 2 {
-                assert_policy_ne(&policy, &policy_with_temp, Node::EPS);
-            }
-        }
+        // Terminal state at ply 0 should return 1.0
+        let terminal_state = State::new(
+            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
+            &[(&COPPER, 1), (&ESTATE, 1)],
+            &[WinCondition::Victory(0)],
+            &mut rng,
+        );
+        let node = Node::new(Weak::new(), terminal_state, 0.0);
+        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), Some(1.0));
 
-        /// Temperature of 0.0 should be argmax.
-        #[test]
-        fn temperature_0(policy in policy_strategy()) {
-            let policy_with_temp = apply_temperature(&policy, 0.0);
-            let max = policy_with_temp.iter().fold(f32::NEG_INFINITY, |a, &b| f32::max(a, b));
-            let max_count = policy_with_temp.iter().filter(|&&p| p == max).count() as f32;
-            assert_policy_sum_1(&policy_with_temp);
-            for p in policy_with_temp {
-                if p == max {
-                    assert_eq!(1.0 / max_count, p);
-                }
-            }
-        }
-    }
+        // Terminal state at avg_ply should return 0.0
+        let terminal_state = State::new(
+            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
+            &[(&COPPER, 1), (&ESTATE, 1)],
+            &[WinCondition::Victory(avg_ply)],
+            &mut rng,
+        );
+        let mut node = Node::new(Weak::new(), terminal_state, 0.0);
+        node.state.ply = avg_ply;
+        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), Some(0.0));
 
-    fn assert_policy_sum_1(policy: &Policy) {
-        let sum = policy.iter().sum::<f32>();
-        if (sum - 1.0).abs() > 1e-5 {
-            panic!("policy sum {:?} is not 1.0: {:?}", sum, policy);
-        }
-    }
+        // Terminal state at max_ply should return -1.0
+        let terminal_state = State::new(
+            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
+            &[(&COPPER, 1), (&ESTATE, 1)],
+            &[WinCondition::Victory(max_ply)],
+            &mut rng,
+        );
+        let mut node = Node::new(Weak::new(), terminal_state, 0.0);
+        node.state.ply = max_ply;
+        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), Some(-1.0));
 
-    fn assert_policy_eq(p1: &Policy, p2: &Policy, epsilon: f32) {
-        let eq = p1
-            .iter()
-            .zip(p2.iter())
-            .all(|(a, b)| (a - b).abs() < epsilon);
-        if !eq {
-            panic!("policies are not equal: {:?} {:?}", p1, p2);
-        }
-    }
+        // Terminal state at ply 15 (halfway between 0 and avg_ply) should return 0.5
+        let terminal_state = State::new(
+            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
+            &[(&COPPER, 1), (&ESTATE, 1)],
+            &[WinCondition::Victory(avg_ply / 2)],
+            &mut rng,
+        );
+        let mut node = Node::new(Weak::new(), terminal_state, 0.0);
+        node.state.ply = avg_ply / 2;
+        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), Some(0.5));
 
-    fn assert_policy_ne(p1: &Policy, p2: &Policy, epsilon: f32) {
-        let ne = p1
-            .iter()
-            .zip(p2.iter())
-            .any(|(a, b)| (a - b).abs() > epsilon);
-        if !ne {
-            panic!("policies are equal: {:?} {:?}", p1, p2);
-        }
+        // Terminal state at ply 65 (halfway between avg_ply and max_ply) should return -0.5
+        let terminal_state = State::new(
+            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
+            &[(&COPPER, 1), (&ESTATE, 1)],
+            &[WinCondition::Victory(avg_ply + (max_ply - avg_ply) / 2)],
+            &mut rng,
+        );
+        let mut node = Node::new(Weak::new(), terminal_state, 0.0);
+        node.state.ply = avg_ply + (max_ply - avg_ply) / 2;
+        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), Some(-0.5));
     }
 }

@@ -19,3 +19,11 @@ pub static ACTION_SET: [Action; N_ACTIONS] = {
     }
     actions
 };
+
+/// Returns the index of the given action in the ACTION_SET array.
+pub fn action_to_idx(action: &Action) -> usize {
+    ACTION_SET
+        .iter()
+        .position(|a| a == action)
+        .expect("Action not found in ACTION_SET")
+}

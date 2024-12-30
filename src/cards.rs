@@ -1,6 +1,7 @@
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Card {
     pub name: &'static str,
+    pub short_name: &'static str,
     pub cost: u8,
     pub treasure: u8,
     pub victory: u8,
@@ -8,6 +9,7 @@ pub struct Card {
 
 pub static COPPER: Card = Card {
     name: "Copper",
+    short_name: "C",
     cost: 0,
     treasure: 1,
     victory: 0,
@@ -15,6 +17,7 @@ pub static COPPER: Card = Card {
 
 pub static ESTATE: Card = Card {
     name: "Estate",
+    short_name: "E",
     cost: 2,
     treasure: 0,
     victory: 1,
