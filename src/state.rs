@@ -22,6 +22,54 @@ pub struct State {
     win_conditions: Vec<WinCondition>,
 }
 
+#[derive(Debug, Copy, Clone)]
+pub enum WinCondition {
+    VictoryPoints(u8),
+}
+
+static DEFAULT_WIN_CONDITIONS: [WinCondition; 1] = [WinCondition::VictoryPoints(10)];
+
+pub struct StateBuilder<'a> {
+    discard: &'a [&'static Card],
+    kingdom: &'a [(&'static Card, u8)],
+    win_conditions: &'a [WinCondition],
+}
+
+impl<'a> Default for StateBuilder<'a> {
+    fn default() -> Self {
+        Self {
+            discard: &DEFAULT_DECK[..],
+            kingdom: &DEFAULT_KINGDOM[..],
+            win_conditions: &DEFAULT_WIN_CONDITIONS[..],
+        }
+    }
+}
+
+impl<'a> StateBuilder<'a> {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn with_discard(mut self, discard: &'a [&'static Card]) -> Self {
+        self.discard = discard;
+        self
+    }
+
+    pub fn with_kingdom(mut self, kingdom: &'a [(&'static Card, u8)]) -> Self {
+        self.kingdom = kingdom;
+        self
+    }
+
+    pub fn with_win_conditions(mut self, win_conditions: &'a [WinCondition]) -> Self {
+        self.win_conditions = win_conditions;
+        self
+    }
+
+    pub fn build(self, rng: &mut SmallRng) -> State {
+        State::new(self.discard, self.kingdom, self.win_conditions, rng)
+    }
+}
+
 impl Debug for State {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result {
         write!(f, "{}", self)
@@ -61,11 +109,6 @@ impl Display for State {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
-pub enum WinCondition {
-    Victory(u8),
-}
-
 impl State {
     /// The number of cards we draw at the start of each turn.
     const HAND_SIZE: usize = 5;
@@ -94,15 +137,6 @@ impl State {
         ret
     }
 
-    pub fn new_default(rng: &mut SmallRng) -> Self {
-        Self::new(
-            &DEFAULT_DECK,
-            &DEFAULT_KINGDOM,
-            &[WinCondition::Victory(10)],
-            rng,
-        )
-    }
-
     /// Increases the ply, discards the hand, draws a new hand, and resets gold/buys.
     fn new_turn(&mut self, rng: &mut SmallRng) -> &mut Self {
         self.ply += 1;
@@ -111,12 +145,12 @@ impl State {
         self.discard.extend(self.hand.iter());
         self.hand.clear();
 
-        // Draw new hand
-        self.draw(Self::HAND_SIZE, rng);
-
         // Reset unspent gold and buys
         self.unspent_gold = 0;
         self.unspent_buys = 1;
+
+        // Draw new hand
+        self.draw(Self::HAND_SIZE, rng);
 
         self
     }
@@ -156,9 +190,20 @@ impl State {
             Action::EndTurn => (action, true),
             Action::Buy(card) => (
                 action,
-                self.unspent_gold >= card.cost && self.unspent_buys > 0,
+                self.unspent_gold >= card.cost
+                    && self.unspent_buys > 0
+                    && self
+                        .kingdom
+                        .get(card)
+                        .cloned()
+                        .expect("card not in kingdom")
+                        > 0,
             ),
         })
+    }
+
+    pub fn can_play_action(&self, action: Action) -> bool {
+        self.valid_actions().contains(&(action, true))
     }
 
     /// Mask the policy logprobs by setting illegal moves to [f32::NEG_INFINITY].
@@ -173,7 +218,7 @@ impl State {
         }
     }
 
-    pub fn victory_count(&self) -> u8 {
+    pub fn victory_points(&self) -> u8 {
         [&self.hand, &self.draw, &self.discard]
             .into_iter()
             .flatten()
@@ -189,8 +234,8 @@ impl State {
 
         for &win_condition in self.win_conditions.iter() {
             match win_condition {
-                WinCondition::Victory(target_victory) => {
-                    if self.victory_count() >= target_victory {
+                WinCondition::VictoryPoints(target_victory) => {
+                    if self.victory_points() >= target_victory {
                         return Some(self.ply);
                     }
                 }
@@ -207,10 +252,16 @@ impl State {
                 next.new_turn(rng);
             }
             Action::Buy(card) => {
+                if next.kingdom.get(card).expect("card not in kingdom") == &0 {
+                    dbg!(&next);
+                    panic!("Cannot buy unavailable card {}", card);
+                }
                 next.kingdom.entry(card).and_modify(|count| *count -= 1);
-                next.discard.push(card);
+                assert!(next.unspent_gold >= card.cost, "Cannot afford card");
                 next.unspent_gold -= card.cost;
+                assert!(next.unspent_buys > 0, "Tried to buy card with no buys left");
                 next.unspent_buys -= 1;
+                next.discard.push(card);
             }
         }
         next
@@ -224,19 +275,19 @@ mod tests {
     use rand::SeedableRng;
 
     fn assert_can_play_action(state: &State, action: Action, can_play: bool) {
-        assert_eq!(can_play_action(state, action), can_play);
-    }
-
-    fn can_play_action(state: &State, action: Action) -> bool {
-        let actions = state.valid_actions();
-        actions.contains(&(action, true))
+        assert_eq!(
+            state.can_play_action(action),
+            can_play,
+            "Attempting to play invalid action {}",
+            action
+        );
     }
 
     proptest! {
         #[test]
         fn test_sanity(seed in 0..u64::MAX) {
             let mut rng = SmallRng::seed_from_u64(seed);
-            let state = State::new_default(&mut rng);
+            let state = StateBuilder::new().build(&mut rng);
             assert_eq!(state.ply, 0);
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 5);
@@ -252,7 +303,7 @@ mod tests {
         #[test]
         fn test_buy_copper(seed in 0..u64::MAX) {
             let mut rng = SmallRng::seed_from_u64(seed);
-            let state = State::new_default(&mut rng);
+            let state = StateBuilder::new().build(&mut rng);
             let unspent_gold = state.unspent_gold;
 
             // Buy a copper
@@ -280,7 +331,7 @@ mod tests {
         #[test]
         fn test_buy_estate(seed in 0..u64::MAX) {
             let mut rng = SmallRng::seed_from_u64(seed);
-            let state = State::new_default(&mut rng);
+            let state = StateBuilder::new().build(&mut rng);
             let unspent_gold = state.unspent_gold;
 
             // Buy an estate
@@ -308,20 +359,23 @@ mod tests {
         #[test]
         fn test_victory(seed in 0..u64::MAX) {
             let mut rng = SmallRng::seed_from_u64(seed);
-            let mut state = State::new_default(&mut rng);
+            let mut state = StateBuilder::new()
+                .with_discard(&[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER])
+                .with_kingdom(&[(&COPPER, 10), (&ESTATE, 10)])
+                .with_win_conditions(&[WinCondition::VictoryPoints(10)])
+                .build(&mut rng);
             assert_eq!(state.is_terminal(), None);
 
-            for _ in 0..100 {
+            while state.ply < State::MAX_PLY {
                 if state.is_terminal().is_some() {
                     return Ok(());
                 }
-
-                if can_play_action(&state, Action::Buy(&ESTATE)) {
+                if state.can_play_action(Action::Buy(&ESTATE)) {
                     state = state.apply_action(Action::Buy(&ESTATE), &mut rng);
-                } else {
-                    assert_can_play_action(&state, Action::Buy(&COPPER), true);
+                } else if state.can_play_action(Action::Buy(&COPPER)) {
                     state = state.apply_action(Action::Buy(&COPPER), &mut rng);
                 }
+                assert_can_play_action(&state, Action::EndTurn, true);
                 state = state.apply_action(Action::EndTurn, &mut rng);
             }
 

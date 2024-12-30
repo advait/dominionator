@@ -21,6 +21,14 @@ pub struct MCTS {
     rng: SmallRng,
 }
 
+pub struct NNEst {
+    q: QValue,
+    policy_logprobs: Policy,
+    c_exploration: f32,
+    max_ply: u8,
+    avg_ply: u8,
+}
+
 impl MCTS {
     const UNIFORM_POLICY: Policy = [1.0 / N_ACTIONS as f32; N_ACTIONS];
 
@@ -38,31 +46,24 @@ impl MCTS {
         self.root.borrow().visit_count
     }
 
-    pub fn on_received_nn_est(
-        &mut self,
-        q_est: QValue,
-        mut policy_logprobs_est: Policy,
-        c_exploration: f32,
-        max_ply: u8,
-        avg_ply: u8,
-    ) {
+    pub fn on_received_nn_est(&mut self, mut est: NNEst) {
         let mut leaf = self.leaf.borrow_mut();
-        if let Some(q_actual) = leaf.get_terminal_q_value(max_ply, avg_ply) {
+        if let Some(q_actual) = leaf.get_terminal_q_value(est.max_ply, est.avg_ply) {
             // If we've reached a terminal state, backpropagate the actual q value and attempt
             // to select a new leaf node.
             leaf.backpropagate(q_actual);
             drop(leaf); // Drop leaf borrow so we can reassign self.leaf
 
-            self.select_new_leaf(c_exploration);
+            self.select_new_leaf(est.c_exploration);
         } else {
             // Non-terminal state found, proceed with normal expansion
-            leaf.state.mask_policy(&mut policy_logprobs_est);
-            let policy_est = softmax(policy_logprobs_est);
+            leaf.state.mask_policy(&mut est.policy_logprobs);
+            let policy_est = softmax(est.policy_logprobs);
             leaf.expand(self.leaf.clone(), policy_est, &mut self.rng);
-            leaf.backpropagate(q_est);
+            leaf.backpropagate(est.q);
 
             drop(leaf); // Drop leaf borrow so we can reassign self.leaf
-            self.select_new_leaf(c_exploration);
+            self.select_new_leaf(est.c_exploration);
         }
     }
 
@@ -91,18 +92,19 @@ impl MCTS {
     /// Makes a move, updating the root node to be the child node corresponding to the action.
     /// Stores the previous position and policy in the [Self::moves] vector.
     pub fn make_move(&mut self, action: Action, c_exploration: f32) {
-        let leaf = self.leaf.borrow_mut();
+        let root = self.root.borrow_mut();
         let child_idx = action_to_idx(&action);
 
-        let child = leaf
+        let child = root
             .children
             .as_ref()
             .expect("apply_action called on leaf with no children")[child_idx]
             .as_ref()
             .expect("illegal action");
-        self.root = Rc::clone(child);
+        let child = Rc::clone(child);
+        drop(root); // Drop root borrow so we can reassign self.root
+        self.root = child;
 
-        drop(leaf); // Drop leaf borrow so we can reassign self.leaf
         self.select_new_leaf(c_exploration);
         self.actions.push(action);
     }
@@ -188,14 +190,14 @@ impl Node {
 
         // For wins/losses, map ply from [0, max_ply] to [-1, 1]
         // with avg_ply mapping to 0
-        let score = if ply <= avg_ply {
+        let q = if ply <= avg_ply {
             // Early segment: map [0, avg_ply] to [1, 0]
             1.0 - (ply / avg_ply)
         } else {
             // Late segment: map [avg_ply, max_ply] to [0, -1]
             -(ply - avg_ply) / (max_ply - avg_ply)
         };
-        Some(score)
+        Some(q)
     }
 
     /// Returns the child with the highest UCT value.
@@ -261,7 +263,11 @@ impl Node {
 
 #[cfg(test)]
 mod tests {
-    use crate::{cards::*, policy::policy_value_for_action, state::WinCondition};
+    use crate::{
+        cards::*,
+        policy::policy_value_for_action,
+        state::{StateBuilder, WinCondition},
+    };
 
     use super::*;
     use more_asserts::assert_gt;
@@ -271,20 +277,32 @@ mod tests {
     fn test_obvious_win() {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
-        let state = State::new(
-            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
-            &[(&COPPER, 1), (&ESTATE, 1)],
-            &[WinCondition::Victory(1)],
-            &mut rng,
-        );
+        let state = StateBuilder::new()
+            .with_discard(&[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER])
+            .with_kingdom(&[(&COPPER, 1), (&ESTATE, 1)])
+            .with_win_conditions(&[WinCondition::VictoryPoints(1)])
+            .build(&mut rng);
         assert_eq!(state.is_terminal(), None);
         let mut mcts = MCTS::new(state, rng);
 
-        while mcts.root_visit_count() < 100 {
-            mcts.on_received_nn_est(0., MCTS::UNIFORM_POLICY, c_exploration, 5, 3);
+        while mcts.root_visit_count() < 10 {
+            mcts.on_received_nn_est(NNEst {
+                q: 0.0,
+                policy_logprobs: MCTS::UNIFORM_POLICY,
+                c_exploration,
+                max_ply: 5,
+                avg_ply: 3,
+            });
         }
         let policy = mcts.root.borrow().policy();
-        assert_gt!(policy_value_for_action(&policy, &Action::Buy(&ESTATE)), 0.9);
+        assert_gt!(
+            policy_value_for_action(&policy, &Action::Buy(&ESTATE)),
+            0.99
+        );
+
+        // Buy the estate
+        mcts.make_random_move(0.0, c_exploration);
+        assert!(mcts.root.borrow().state.is_terminal().is_some());
     }
 
     #[test]
@@ -297,64 +315,29 @@ mod tests {
         let non_terminal_state = State::new(
             &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
             &[(&COPPER, 1), (&ESTATE, 1)],
-            &[WinCondition::Victory(100)],
+            &[WinCondition::VictoryPoints(100)],
             &mut rng,
         );
         let node = Node::new(Weak::new(), non_terminal_state, 0.0);
         assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), None);
 
-        // Terminal state at ply 0 should return 1.0
         let terminal_state = State::new(
             &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
             &[(&COPPER, 1), (&ESTATE, 1)],
-            &[WinCondition::Victory(0)],
+            &[WinCondition::VictoryPoints(0)],
             &mut rng,
         );
-        let node = Node::new(Weak::new(), terminal_state, 0.0);
-        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), Some(1.0));
-
-        // Terminal state at avg_ply should return 0.0
-        let terminal_state = State::new(
-            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
-            &[(&COPPER, 1), (&ESTATE, 1)],
-            &[WinCondition::Victory(avg_ply)],
-            &mut rng,
-        );
-        let mut node = Node::new(Weak::new(), terminal_state, 0.0);
-        node.state.ply = avg_ply;
-        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), Some(0.0));
-
-        // Terminal state at max_ply should return -1.0
-        let terminal_state = State::new(
-            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
-            &[(&COPPER, 1), (&ESTATE, 1)],
-            &[WinCondition::Victory(max_ply)],
-            &mut rng,
-        );
-        let mut node = Node::new(Weak::new(), terminal_state, 0.0);
-        node.state.ply = max_ply;
-        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), Some(-1.0));
-
-        // Terminal state at ply 15 (halfway between 0 and avg_ply) should return 0.5
-        let terminal_state = State::new(
-            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
-            &[(&COPPER, 1), (&ESTATE, 1)],
-            &[WinCondition::Victory(avg_ply / 2)],
-            &mut rng,
-        );
-        let mut node = Node::new(Weak::new(), terminal_state, 0.0);
-        node.state.ply = avg_ply / 2;
-        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), Some(0.5));
-
-        // Terminal state at ply 65 (halfway between avg_ply and max_ply) should return -0.5
-        let terminal_state = State::new(
-            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
-            &[(&COPPER, 1), (&ESTATE, 1)],
-            &[WinCondition::Victory(avg_ply + (max_ply - avg_ply) / 2)],
-            &mut rng,
-        );
-        let mut node = Node::new(Weak::new(), terminal_state, 0.0);
-        node.state.ply = avg_ply + (max_ply - avg_ply) / 2;
-        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), Some(-0.5));
+        let test_cases = [
+            (0, Some(1.0)),           // Terminal state at ply 0 should return 1.0
+            (avg_ply, Some(0.0)),     // Terminal state at avg_ply should return 0.0
+            (max_ply, Some(-1.0)),    // Terminal state at max_ply should return -1.0
+            (avg_ply / 2, Some(0.5)), // Terminal state at ply 15 (halfway between 0 and avg_ply) should return 0.5
+            (avg_ply + (max_ply - avg_ply) / 2, Some(-0.5)), // Terminal state at ply 65 (halfway between avg_ply and max_ply) should return -0.5
+        ];
+        for &(ply, expected) in &test_cases {
+            let mut node = Node::new(Weak::new(), terminal_state.clone(), 0.0);
+            node.state.ply = ply;
+            assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), expected);
+        }
     }
 }

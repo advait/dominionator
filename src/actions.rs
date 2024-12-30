@@ -1,9 +1,20 @@
+use std::fmt::Display;
+
 use crate::cards::{Card, CARD_SET, N_CARDS};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Action {
     EndTurn,
     Buy(&'static Card),
+}
+
+impl Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Action::EndTurn => write!(f, "EndTurn"),
+            Action::Buy(card) => write!(f, "Buy({})", card.short_name),
+        }
+    }
 }
 
 pub const N_ACTIONS: usize = 1 + N_CARDS;

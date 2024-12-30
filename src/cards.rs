@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Card {
     pub name: &'static str,
@@ -5,6 +7,12 @@ pub struct Card {
     pub cost: u8,
     pub treasure: u8,
     pub victory: u8,
+}
+
+impl Display for Card {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.short_name)
+    }
 }
 
 pub static COPPER: Card = Card {
