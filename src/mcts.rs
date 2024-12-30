@@ -333,6 +333,42 @@ mod tests {
         assert_can_play_action(&mcts.root.borrow().state, Action::Buy(&PROVINCE), false);
     }
 
+    /// If we can buy a province and gold and the win target is 7vp, we should buy the province.
+    #[test]
+    fn test_buy_province_over_gold() {
+        let c_exploration = 2.0;
+        let mut rng = SmallRng::seed_from_u64(1);
+        let state = StateBuilder::new()
+            .with_discard(&[&GOLD, &GOLD, &SILVER])
+            .with_kingdom(&[
+                (&COPPER, 5),
+                (&SILVER, 5),
+                (&GOLD, 5),
+                (&ESTATE, 5),
+                (&DUCHY, 5),
+                (&PROVINCE, 5),
+            ])
+            .with_win_conditions(&[WinCondition::VictoryPoints(7)])
+            .build(&mut rng);
+        assert_eq!(state.is_terminal(), None);
+        let mut mcts = MCTS::new(state, rng);
+
+        while mcts.root_visit_count() < 100 {
+            mcts.on_received_nn_est(NNEst {
+                q: 0.0,
+                policy_logprobs: MCTS::UNIFORM_POLICY,
+                c_exploration,
+                max_ply: 7,
+                avg_ply: 3,
+            });
+        }
+        let policy = mcts.root.borrow().policy();
+        assert_gt!(
+            policy_value_for_action(&policy, &Action::Buy(&PROVINCE)),
+            0.99
+        );
+    }
+
     #[test]
     fn test_terminal_q_value() {
         let mut rng = SmallRng::seed_from_u64(1);
