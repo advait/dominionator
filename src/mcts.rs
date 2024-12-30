@@ -266,15 +266,16 @@ mod tests {
     use crate::{
         cards::*,
         policy::policy_value_for_action,
-        state::{StateBuilder, WinCondition},
+        state::{tests::assert_can_play_action, StateBuilder, WinCondition},
     };
 
     use super::*;
     use more_asserts::assert_gt;
     use rand::SeedableRng;
 
+    /// If we can buy an estate to win, we should do so.
     #[test]
-    fn test_obvious_win() {
+    fn test_obvious_win_buy_estate() {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
@@ -303,6 +304,33 @@ mod tests {
         // Buy the estate
         mcts.make_random_move(0.0, c_exploration);
         assert!(mcts.root.borrow().state.is_terminal().is_some());
+    }
+
+    /// If we can buy a Gold, Silver, and Copper, we should buy Gold.
+    #[test]
+    fn test_obvious_win_buy_gold() {
+        let c_exploration = 2.0;
+        let mut rng = SmallRng::seed_from_u64(1);
+        let state = StateBuilder::new()
+            .with_discard(&[&COPPER, &COPPER, &COPPER, &COPPER, &SILVER])
+            .with_kingdom(&[(&COPPER, 5), (&SILVER, 5), (&GOLD, 5), (&PROVINCE, 1)])
+            .with_win_conditions(&[WinCondition::VictoryPoints(6)])
+            .build(&mut rng);
+        assert_eq!(state.is_terminal(), None);
+        let mut mcts = MCTS::new(state, rng);
+
+        while mcts.root_visit_count() < 100 {
+            mcts.on_received_nn_est(NNEst {
+                q: 0.0,
+                policy_logprobs: MCTS::UNIFORM_POLICY,
+                c_exploration,
+                max_ply: 7,
+                avg_ply: 3,
+            });
+        }
+        let policy = mcts.root.borrow().policy();
+        assert_gt!(policy_value_for_action(&policy, &Action::Buy(&GOLD)), 0.99);
+        assert_can_play_action(&mcts.root.borrow().state, Action::Buy(&PROVINCE), false);
     }
 
     #[test]

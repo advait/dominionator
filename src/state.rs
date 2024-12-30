@@ -192,12 +192,7 @@ impl State {
                 action,
                 self.unspent_gold >= card.cost
                     && self.unspent_buys > 0
-                    && self
-                        .kingdom
-                        .get(card)
-                        .cloned()
-                        .expect("card not in kingdom")
-                        > 0,
+                    && self.kingdom.get(card).cloned().unwrap_or(0) > 0,
             ),
         })
     }
@@ -268,13 +263,13 @@ impl State {
     }
 }
 #[cfg(test)]
-mod tests {
+pub mod tests {
     use super::*;
     use crate::cards::{COPPER, ESTATE};
     use proptest::prelude::*;
     use rand::SeedableRng;
 
-    fn assert_can_play_action(state: &State, action: Action, can_play: bool) {
+    pub fn assert_can_play_action(state: &State, action: Action, can_play: bool) {
         assert_eq!(
             state.can_play_action(action),
             can_play,
@@ -303,7 +298,9 @@ mod tests {
         #[test]
         fn test_buy_copper(seed in 0..u64::MAX) {
             let mut rng = SmallRng::seed_from_u64(seed);
-            let state = StateBuilder::new().build(&mut rng);
+            let state = StateBuilder::new()
+                .with_kingdom(&[(&COPPER, 10), (&ESTATE, 10)])
+                .build(&mut rng);
             let unspent_gold = state.unspent_gold;
 
             // Buy a copper
@@ -323,15 +320,16 @@ mod tests {
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 0);
             assert_eq!(state.discard.len(), 6); // Includes new copper
-            assert_eq!(state.kingdom.len(), 2);
-            assert_eq!(state.kingdom[&COPPER], 59);
-            assert_eq!(state.kingdom[&ESTATE], 12);
+            assert_eq!(state.kingdom[&COPPER], 9);
+            assert_eq!(state.kingdom[&ESTATE], 10);
         }
 
         #[test]
         fn test_buy_estate(seed in 0..u64::MAX) {
             let mut rng = SmallRng::seed_from_u64(seed);
-            let state = StateBuilder::new().build(&mut rng);
+            let state = StateBuilder::new()
+                .with_kingdom(&[(&COPPER, 10), (&ESTATE, 10)])
+                .build(&mut rng);
             let unspent_gold = state.unspent_gold;
 
             // Buy an estate
@@ -352,8 +350,8 @@ mod tests {
             assert_eq!(state.draw.len(), 0);
             assert_eq!(state.discard.len(), 6); // Includes new estate
             assert_eq!(state.kingdom.len(), 2);
-            assert_eq!(state.kingdom[&COPPER], 60);
-            assert_eq!(state.kingdom[&ESTATE], 11);
+            assert_eq!(state.kingdom[&COPPER], 10);
+            assert_eq!(state.kingdom[&ESTATE], 9);
         }
 
         #[test]

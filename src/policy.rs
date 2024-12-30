@@ -63,6 +63,7 @@ pub fn policy_value_for_action(policy: &Policy, action: &Action) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prop::collection::vec;
     use proptest::prelude::*;
 
     const CONST_COL_WEIGHT: f32 = 1.0 / N_ACTIONS as f32;
@@ -73,11 +74,15 @@ mod tests {
         let max = 10.0f32;
         let positive_strategy = min..max;
         let neg_inf_strategy = Just(f32::NEG_INFINITY);
-        prop::array::uniform3(prop_oneof![positive_strategy, neg_inf_strategy])
-            .prop_filter("all neg infinity not allowed", |policy_logits| {
-                !policy_logits.iter().all(|&p| p == f32::NEG_INFINITY)
-            })
-            .prop_map(|policy_log| softmax(policy_log))
+        vec(
+            prop_oneof![positive_strategy, neg_inf_strategy],
+            N_ACTIONS..N_ACTIONS + 1,
+        )
+        .prop_filter("all neg infinity not allowed", |policy_logits| {
+            !policy_logits.iter().all(|&p| p == f32::NEG_INFINITY)
+        })
+        .prop_map(|v| policy_from_iter(v.into_iter()))
+        .prop_map(|policy| softmax(policy))
     }
 
     proptest! {
