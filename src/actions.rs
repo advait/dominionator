@@ -1,31 +1,31 @@
 use std::fmt::Display;
 
-use crate::cards::{Card, CARD_SET, N_CARDS};
+use crate::cards::Card;
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Action {
     EndTurn,
-    Buy(&'static Card),
+    Buy(Card),
 }
 
 impl Display for Action {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Action::EndTurn => write!(f, "EndTurn"),
-            Action::Buy(card) => write!(f, "Buy({})", card.short_name),
+            Action::Buy(card) => write!(f, "Buy({})", card.short_name()),
         }
     }
 }
 
-pub const N_ACTIONS: usize = 1 + N_CARDS;
+pub const N_ACTIONS: usize = 1 + Card::N_CARDS;
 
 // The ordering of ACTION_SET must be globally consistent across all games as we use the index of
 // actions within this array to indicate whether a given action is valid.
 pub static ACTION_SET: [Action; N_ACTIONS] = {
     let mut actions = [Action::EndTurn; N_ACTIONS];
     let mut i = 0;
-    while i < N_CARDS {
-        actions[1 + i] = Action::Buy(CARD_SET[i]);
+    while i < Card::N_CARDS {
+        actions[1 + i] = Action::Buy(Card::ALL[i]);
         i += 1;
     }
     actions

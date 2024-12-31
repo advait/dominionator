@@ -60,6 +60,8 @@ impl MCTS {
             leaf.state.mask_policy(&mut est.policy_logprobs);
             let policy_est = softmax(est.policy_logprobs);
             leaf.expand(self.leaf.clone(), policy_est, &mut self.rng);
+            // TODO: If we've expanded a leaf that has a single child (only one valid action), then
+            // we can preemptively take that action and select that child as the new leaf.
             leaf.backpropagate(est.q);
 
             drop(leaf); // Drop leaf borrow so we can reassign self.leaf
@@ -264,7 +266,7 @@ impl Node {
 #[cfg(test)]
 mod tests {
     use crate::{
-        cards::*,
+        cards::Card::*,
         policy::policy_value_for_action,
         state::{tests::assert_can_play_action, StateBuilder, WinCondition},
     };
@@ -279,8 +281,8 @@ mod tests {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER])
-            .with_kingdom(&[(&COPPER, 1), (&ESTATE, 1)])
+            .with_discard(&[Copper, Copper, Copper, Copper, Copper])
+            .with_kingdom(&[(Copper, 1), (Estate, 1)])
             .with_win_conditions(&[WinCondition::VictoryPoints(1)])
             .build(&mut rng);
         assert_eq!(state.is_terminal(), None);
@@ -296,10 +298,7 @@ mod tests {
             });
         }
         let policy = mcts.root.borrow().policy();
-        assert_gt!(
-            policy_value_for_action(&policy, &Action::Buy(&ESTATE)),
-            0.99
-        );
+        assert_gt!(policy_value_for_action(&policy, &Action::Buy(Estate)), 0.99);
 
         // Buy the estate
         mcts.make_random_move(0.0, c_exploration);
@@ -312,8 +311,8 @@ mod tests {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[&COPPER, &COPPER, &COPPER, &COPPER, &SILVER])
-            .with_kingdom(&[(&COPPER, 5), (&SILVER, 5), (&GOLD, 5), (&PROVINCE, 1)])
+            .with_discard(&[Copper, Copper, Copper, Copper, Silver])
+            .with_kingdom(&[(Copper, 5), (Silver, 5), (Gold, 5), (Province, 1)])
             .with_win_conditions(&[WinCondition::VictoryPoints(6)])
             .build(&mut rng);
         assert_eq!(state.is_terminal(), None);
@@ -329,8 +328,8 @@ mod tests {
             });
         }
         let policy = mcts.root.borrow().policy();
-        assert_gt!(policy_value_for_action(&policy, &Action::Buy(&GOLD)), 0.99);
-        assert_can_play_action(&mcts.root.borrow().state, Action::Buy(&PROVINCE), false);
+        assert_gt!(policy_value_for_action(&policy, &Action::Buy(Gold)), 0.99);
+        assert_can_play_action(&mcts.root.borrow().state, Action::Buy(Province), false);
     }
 
     /// If we can buy a province and gold and the win target is 7vp, we should buy the province.
@@ -339,14 +338,14 @@ mod tests {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[&GOLD, &GOLD, &SILVER])
+            .with_discard(&[Gold, Gold, Silver])
             .with_kingdom(&[
-                (&COPPER, 5),
-                (&SILVER, 5),
-                (&GOLD, 5),
-                (&ESTATE, 5),
-                (&DUCHY, 5),
-                (&PROVINCE, 5),
+                (Copper, 5),
+                (Silver, 5),
+                (Gold, 5),
+                (Estate, 5),
+                (Duchy, 5),
+                (Province, 5),
             ])
             .with_win_conditions(&[WinCondition::VictoryPoints(7)])
             .build(&mut rng);
@@ -364,7 +363,7 @@ mod tests {
         }
         let policy = mcts.root.borrow().policy();
         assert_gt!(
-            policy_value_for_action(&policy, &Action::Buy(&PROVINCE)),
+            policy_value_for_action(&policy, &Action::Buy(Province)),
             0.99
         );
     }
@@ -377,8 +376,8 @@ mod tests {
 
         // Non-terminal state should return None
         let non_terminal_state = State::new(
-            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
-            &[(&COPPER, 1), (&ESTATE, 1)],
+            &[Copper, Copper, Copper, Copper, Copper],
+            &[(Copper, 1), (Estate, 1)],
             &[WinCondition::VictoryPoints(100)],
             &mut rng,
         );
@@ -386,8 +385,8 @@ mod tests {
         assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), None);
 
         let terminal_state = State::new(
-            &[&COPPER, &COPPER, &COPPER, &COPPER, &COPPER],
-            &[(&COPPER, 1), (&ESTATE, 1)],
+            &[Copper, Copper, Copper, Copper, Copper],
+            &[(Copper, 1), (Estate, 1)],
             &[WinCondition::VictoryPoints(0)],
             &mut rng,
         );
