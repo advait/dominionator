@@ -1,5 +1,5 @@
 use crate::{
-    actions::{Action, ACTION_SET, N_ACTIONS},
+    actions::Action,
     cards::{Card, Card::*},
     policy::Policy,
     types::Ply,
@@ -198,9 +198,11 @@ impl State {
     }
 
     /// For each possible action, returns a tuple of the action and whether it is valid or not.
-    pub fn valid_actions(&self) -> [(Action, bool); N_ACTIONS] {
-        ACTION_SET.map(|action| match action {
+    pub fn valid_actions(&self) -> [(Action, bool); Action::N_ACTIONS] {
+        Action::ALL.map(|action| match action {
             Action::EndTurn => (action, true),
+            Action::Play(_) => (action, false),
+            Action::Trash(_) => (action, false),
             Action::Buy(card) => (
                 action,
                 self.unspent_gold >= card.cost()
@@ -218,7 +220,7 @@ impl State {
     pub fn mask_policy(&self, policy_logprobs: &mut Policy) {
         let valid_actions = self.valid_actions();
 
-        for i in 0..N_ACTIONS {
+        for i in 0..Action::N_ACTIONS {
             let (_, can_play) = valid_actions[i];
             if !can_play {
                 policy_logprobs[i] = f32::NEG_INFINITY;
@@ -259,6 +261,8 @@ impl State {
             Action::EndTurn => {
                 next.new_turn(rng);
             }
+            Action::Play(_) => unimplemented!(),
+            Action::Trash(_) => unimplemented!(),
             Action::Buy(card) => {
                 if next.kingdom.get(&card).expect("card not in kingdom") == &0 {
                     dbg!(&next);

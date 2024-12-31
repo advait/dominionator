@@ -6,7 +6,7 @@ use std::{
 use rand::{distributions::WeightedIndex, prelude::Distribution, rngs::SmallRng};
 
 use crate::{
-    actions::{action_to_idx, Action, ACTION_SET, N_ACTIONS},
+    actions::Action,
     policy::{apply_temperature, policy_from_iter, softmax, Policy},
     state::State,
     types::QValue,
@@ -30,7 +30,7 @@ pub struct NNEst {
 }
 
 impl MCTS {
-    const UNIFORM_POLICY: Policy = [1.0 / N_ACTIONS as f32; N_ACTIONS];
+    const UNIFORM_POLICY: Policy = [1.0 / Action::N_ACTIONS as f32; Action::N_ACTIONS];
 
     pub fn new(state: State, rng: SmallRng) -> Self {
         let root = Rc::new(RefCell::new(Node::new(Weak::new(), state, 0.0)));
@@ -95,7 +95,7 @@ impl MCTS {
     /// Stores the previous position and policy in the [Self::moves] vector.
     pub fn make_move(&mut self, action: Action, c_exploration: f32) {
         let root = self.root.borrow_mut();
-        let child_idx = action_to_idx(&action);
+        let child_idx = action.to_idx();
 
         let child = root
             .children
@@ -120,7 +120,7 @@ impl MCTS {
         let policy = self.root.borrow().policy();
         let policy = apply_temperature(&policy, temperature);
         let dist = WeightedIndex::new(policy).unwrap();
-        let action = ACTION_SET[dist.sample(&mut self.rng)];
+        let action = Action::ALL[dist.sample(&mut self.rng)];
         self.make_move(action, c_exploration);
     }
 }
@@ -139,7 +139,7 @@ struct Node {
     visit_count: usize,
     q_sum: QValue,
     initial_policy_value: QValue,
-    children: Option<[Option<Rc<RefCell<Node>>>; N_ACTIONS]>,
+    children: Option<[Option<Rc<RefCell<Node>>>; Action::N_ACTIONS]>,
 }
 
 impl Node {
@@ -249,7 +249,7 @@ impl Node {
         }
 
         let legal_moves = self.state.valid_actions();
-        let children: [Option<Rc<RefCell<Node>>>; N_ACTIONS] = std::array::from_fn(|i| {
+        let children: [Option<Rc<RefCell<Node>>>; Action::N_ACTIONS] = std::array::from_fn(|i| {
             let (action, can_play) = legal_moves[i];
             if can_play {
                 let child_state = self.state.apply_action(action, rng);

@@ -1,8 +1,8 @@
 use std::array;
 
-use crate::actions::{action_to_idx, Action, N_ACTIONS};
+use crate::actions::Action;
 
-pub type Policy = [f32; N_ACTIONS];
+pub type Policy = [f32; Action::N_ACTIONS];
 
 /// Softmax function for a policy.
 pub fn softmax(policy_logprobs: Policy) -> Policy {
@@ -49,7 +49,7 @@ pub fn apply_temperature(policy_probs: &Policy, temperature: f32) -> Policy {
 }
 
 pub fn policy_from_iter<I: IntoIterator<Item = f32>>(iter: I) -> Policy {
-    let mut policy = [0.0; N_ACTIONS];
+    let mut policy = [0.0; Action::N_ACTIONS];
     for (i, p) in iter.into_iter().enumerate() {
         policy[i] = p;
     }
@@ -57,7 +57,7 @@ pub fn policy_from_iter<I: IntoIterator<Item = f32>>(iter: I) -> Policy {
 }
 
 pub fn policy_value_for_action(policy: &Policy, action: &Action) -> f32 {
-    policy[action_to_idx(action)]
+    policy[action.to_idx()]
 }
 
 #[cfg(test)]
@@ -66,7 +66,7 @@ mod tests {
     use prop::collection::vec;
     use proptest::prelude::*;
 
-    const CONST_COL_WEIGHT: f32 = 1.0 / N_ACTIONS as f32;
+    const CONST_COL_WEIGHT: f32 = 1.0 / Action::N_ACTIONS as f32;
 
     /// Strategy for generating a policy with at least one non-zero value.
     fn policy_strategy() -> impl Strategy<Value = Policy> {
@@ -76,7 +76,7 @@ mod tests {
         let neg_inf_strategy = Just(f32::NEG_INFINITY);
         vec(
             prop_oneof![positive_strategy, neg_inf_strategy],
-            N_ACTIONS..N_ACTIONS + 1,
+            Action::N_ACTIONS..Action::N_ACTIONS + 1,
         )
         .prop_filter("all neg infinity not allowed", |policy_logits| {
             !policy_logits.iter().all(|&p| p == f32::NEG_INFINITY)
