@@ -4,7 +4,7 @@ use std::fmt::Display;
 macro_rules! define_actions {
     (
         simple_actions: [ $($simple:ident),* $(,)? ],
-        card_actions: [ $($action:ident),* $(,)? ],
+        card_actions: [ $($action:ident(Card)),* $(,)? ],
     ) => {
         #[derive(Debug, Copy, Clone, PartialEq, Eq)]
         pub enum Action {
@@ -46,6 +46,11 @@ macro_rules! define_actions {
                     card_idx += 1;
                 }
 
+                assert!(
+                    idx == Self::N_ACTIONS,
+                    "Not all actions were initialized"
+                );
+
                 actions
             };
 
@@ -83,9 +88,9 @@ use Action::*;
 define_actions! {
     simple_actions: [EndTurn],
     card_actions: [
-        Play,
-        Trash,
-        Buy,
+        Play(Card),
+        Trash(Card),
+        Buy(Card),
     ],
 }
 

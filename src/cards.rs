@@ -2,7 +2,7 @@
 macro_rules! define_cards {
     (
         $(
-            $name:ident = {
+            $name:ident: {
                 short_name: $short_name:literal,
                 cost: $cost:literal,
                 treasure: $treasure:literal,
@@ -85,37 +85,37 @@ macro_rules! define_cards {
 }
 
 define_cards! {
-    Copper = {
+    Copper: {
         short_name: "C",
         cost: 0,
         treasure: 1,
         victory: 0,
     },
-    Silver = {
+    Silver: {
         short_name: "S",
         cost: 3,
         treasure: 2,
         victory: 0,
     },
-    Gold = {
+    Gold: {
         short_name: "G",
         cost: 6,
         treasure: 3,
         victory: 0,
     },
-    Estate = {
+    Estate: {
         short_name: "E",
         cost: 2,
         treasure: 0,
         victory: 1,
     },
-    Duchy = {
+    Duchy: {
         short_name: "D",
         cost: 5,
         treasure: 0,
         victory: 3,
     },
-    Province = {
+    Province: {
         short_name: "P",
         cost: 8,
         treasure: 0,

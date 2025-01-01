@@ -114,7 +114,7 @@ We'll use a transformer-based architecture that discretizes the state into a set
 Because the ordering of cards is irrelevant, we'll use a set transformer.
 
 The key blocks of information include:
-1. Pile contents (one token per card in: hand, draw, discard, kingdom)
+1. Pile contents (one token per unique card in: hand, draw, discard, kingdom)
 2. Pile summaries (one token per pile: hand, draw, discard, kingdom)
 3. Scalar values (one token per scalar value: ply, buys, actions, gold, victory points)
 
