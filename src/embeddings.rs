@@ -137,11 +137,11 @@ use crate::{cards::Card, state::Pile};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Embedding {
+    Padding,
     Card(Card),
     PileType(PileType),
     DiscreteCount(DiscreteCount),
     ContinuousCount(ContinuousCount),
-    Padding,
 }
 
 pub const N_EMBEDDINGS_PER_TOKEN: usize = 7;
@@ -220,14 +220,17 @@ impl FromIterator<Embedding> for Token {
 }
 
 impl Embedding {
-    pub const N_EMBEDDINGS: usize = Card::N_CARDS
+    pub const N_EMBEDDINGS: usize = 1 // Padding
+        + Card::N_CARDS
         + PileType::N_VARIANTS
         + DiscreteCount::N_VARIANTS
         + ContinuousCount::N_VARIANTS;
 
     pub const ALL: [Self; Self::N_EMBEDDINGS] = {
         let mut embeddings = [Self::Card(Card::ALL[0]); Self::N_EMBEDDINGS];
-        let mut idx = 0;
+
+        // idx=0 is reserved for padding
+        let mut idx = 1;
 
         // Add Card embeddings
         let mut i = 0;
