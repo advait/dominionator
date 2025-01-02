@@ -43,7 +43,6 @@ pub fn self_play<E: NNEstT + Send + Sync>(
     max_nn_batch_size: usize,
     n_mcts_iterations: usize,
     c_exploration: f32,
-    c_ply_penalty: f32,
     max_ply: u8,
     avg_ply: u8,
 ) -> Vec<GameResult> {
@@ -100,7 +99,6 @@ pub fn self_play<E: NNEstT + Send + Sync>(
                         n_mcts_iterations,
                         n_mcts_threads,
                         c_exploration,
-                        c_ply_penalty,
                         max_ply,
                         avg_ply,
                         pb_game_done,
@@ -265,7 +263,6 @@ struct MctsThread {
     n_mcts_iterations: usize,
     n_mcts_threads: usize,
     c_exploration: f32,
-    c_ply_penalty: f32,
     max_ply: u8,
     avg_ply: u8,
     pb_game_done: ProgressBar,
@@ -299,7 +296,10 @@ impl MctsThread {
                 let temperature = 1.0;
                 game.make_random_move(self.c_exploration, temperature);
 
-                if let Some(q) = game.get_root_terminal_q(self.max_ply, self.avg_ply) {
+                if game
+                    .get_root_terminal_q(self.max_ply, self.avg_ply)
+                    .is_some()
+                {
                     // Game is over. Send to done_queue.
                     self.n_games_remaining.fetch_sub(1, Ordering::Relaxed);
                     self.done_queue_tx.send(game.to_result()).unwrap();
@@ -411,7 +411,6 @@ pub mod tests {
         let n_games = 1;
         let mcts_iterations = 50;
         let c_exploration = 1.0;
-        let c_ply_penalty = 0.01;
         let max_ply = 10;
         let avg_ply = 5;
         let results = self_play(
@@ -426,7 +425,6 @@ pub mod tests {
             MAX_NN_BATCH_SIZE,
             mcts_iterations,
             c_exploration,
-            c_ply_penalty,
             max_ply,
             avg_ply,
         );

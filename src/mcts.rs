@@ -14,9 +14,9 @@ use crate::{
 };
 
 #[derive(Debug)]
-struct MCTSAction {
+pub struct MCTSAction {
     prev_node: Rc<RefCell<Node>>,
-    action: Action,
+    pub action: Action,
 }
 
 #[derive(Debug)]
