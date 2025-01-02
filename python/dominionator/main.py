@@ -12,6 +12,6 @@ maturin_import_hook.install(
     enable_automatic_installation=True,
 )
 
-import dominionator._rust as rust  # noqa: F403
+import dominionator._rust as rust  # noqa: E402 F403  # type: ignore
 
 print(rust.N_EMBEDDINGS)  # type: ignore

@@ -10,6 +10,23 @@
         "kind": "build",
         "isDefault": true
       }
+    },
+    {
+      "label": "run tests",
+      "type": "shell",
+      "command": "uv run pytest",
+      "problemMatcher": [],
+      "group": {
+        "kind": "test",
+        "isDefault": true
+      }
+    },
+    {
+      "label": "run cargo tests",
+      "type": "shell",
+      "command": "cargo test",
+      "problemMatcher": [],
+      "group": "test"
     }
   ]
 }

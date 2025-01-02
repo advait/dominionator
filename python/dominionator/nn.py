@@ -44,8 +44,23 @@ class ModelConfig:
 @dataclass
 class Batch:
     state_raw_embeddings: torch.Tensor  # (batch, seq, max_embeddings_per_token)
-    q_target: torch.Tensor  # (batch, seq, 1)
-    policy_target_probs: torch.Tensor  # (batch, seq, dim_policy)
+    q_target: torch.Tensor  # (batch, 1)
+    policy_target_probs: torch.Tensor  # (batch, dim_policy)
+
+    @property
+    def batch_size(self) -> int:
+        return self.state_raw_embeddings.shape[0]
+
+    @property
+    def seq_len(self) -> int:
+        return self.state_raw_embeddings.shape[1]
+
+    def __post_init__(self):
+        assert (
+            self.state_raw_embeddings.shape[0]
+            == self.q_target.shape[0]
+            == self.policy_target_probs.shape[0]
+        ), "Batch size mismatch"
 
 
 @dataclass
