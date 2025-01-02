@@ -1,0 +1,41 @@
+[project]
+name = "dominionator"
+version = "0.1.0"
+description = ""
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[build-system]
+requires = ["maturin>=1,<2"]
+build-backend = "maturin"
+
+[tool.maturin]
+python-source = "python"
+
+[tool.uv]
+managed = true
+dev-dependencies = [
+  "pytest>=7.4.3",
+  "pytest-asyncio>=0.23.3",
+  "pyright>=1.1.345",
+  "jupyterlab>=4.0.10",
+  "pandas>=2.1.4",
+  "rankit>=0.3.3",
+  "ruff>=0.6.8",
+]
+
+[tool.pyright]
+typeCheckingMode = "basic"
+extraPaths = ["src", "tests"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+filterwarnings = [
+  # Disable warnings we get form pytorch lightning that clutter pytest output
+  "ignore:pkg_resources is deprecated.*:DeprecationWarning",
+  "ignore:Deprecated call to `pkg_resources.declare_namespace`.*:DeprecationWarning",
+  "ignore:Deprecated call to `pkg_resources.declare_namespace.*:DeprecationWarning",
+  "ignore:You are trying to `self.log()` but the `self.trainer` reference is not registered on the model yet.*",
+]

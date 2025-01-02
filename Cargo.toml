@@ -1,9 +1,14 @@
 [package]
-name = "dominionator"
+name = "dominionator_rust"
 version = "0.1.0"
 edition = "2021"
 
+[lib]
+name = "dominionator_rust"
+crate-type = ["cdylib"]
+
 [dependencies]
+pyo3 = { version = "0.23.3", features = ["extension-module"] }
 approx = "0.5.1"
 crossbeam = "0.8.4"
 crossbeam-channel = "0.5.14"
