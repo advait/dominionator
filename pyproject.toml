@@ -4,7 +4,11 @@ version = "0.1.0"
 description = ""
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+dependencies = [
+    "icecream>=2.1.3",
+    "maturin>=1.8.1",
+    "maturin-import-hook>=0.2.0",
+]
 
 [build-system]
 requires = ["maturin>=1,<2"]
@@ -12,6 +16,7 @@ build-backend = "maturin"
 
 [tool.maturin]
 python-source = "python"
+module-name = "dominionator._rust"
 
 [tool.uv]
 managed = true
@@ -27,11 +32,11 @@ dev-dependencies = [
 
 [tool.pyright]
 typeCheckingMode = "basic"
-extraPaths = ["src", "tests"]
+extraPaths = ["python"]
 
 [tool.pytest.ini_options]
-pythonpath = ["src"]
-testpaths = ["tests"]
+pythonpath = ["python"]
+testpaths = ["python/tests"]
 filterwarnings = [
   # Disable warnings we get form pytorch lightning that clutter pytest output
   "ignore:pkg_resources is deprecated.*:DeprecationWarning",

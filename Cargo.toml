@@ -1,10 +1,10 @@
 [package]
-name = "dominionator_rust"
+name = "dominionator"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "dominionator_rust"
+name = "dominionator"
 crate-type = ["cdylib"]
 
 [dependencies]
