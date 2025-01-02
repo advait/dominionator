@@ -13,7 +13,7 @@ use std::{
 
 pub type Pile = BTreeMap<Card, u8>;
 
-#[derive(Clone)]
+#[derive(Clone, Eq, PartialEq, Hash)]
 pub struct State {
     pub hand: Vec<Card>,
     pub draw: Vec<Card>,
@@ -25,7 +25,7 @@ pub struct State {
     pub win_conditions: Vec<WinCondition>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
 pub enum WinCondition {
     VictoryPoints(u8),
 }

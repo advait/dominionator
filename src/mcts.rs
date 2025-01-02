@@ -9,32 +9,36 @@ use crate::{
     actions::Action,
     policy::{apply_temperature, policy_from_iter, softmax, Policy},
     state::State,
-    types::QValue,
+    types::{GameMetadata, GameResult, NNEst, QValue, Sample},
     utils::OrdF32,
 };
 
 #[derive(Debug)]
+struct MCTSAction {
+    prev_node: Rc<RefCell<Node>>,
+    action: Action,
+}
+
+#[derive(Debug)]
 pub struct MCTS {
+    metadata: GameMetadata,
     root: Rc<RefCell<Node>>,
     leaf: Rc<RefCell<Node>>,
-    actions: Vec<Action>,
+    actions: Vec<MCTSAction>,
     rng: SmallRng,
 }
 
-pub struct NNEst {
-    q: QValue,
-    policy_logprobs: Policy,
-    c_exploration: f32,
-    max_ply: u8,
-    avg_ply: u8,
-}
+/// SAFETY: MCTS is Send because it doesn't have any public methods that expose the Rc/RefCell
+/// which would allow for illegal cross-thread mutation.
+unsafe impl Send for MCTS {}
 
 impl MCTS {
-    const UNIFORM_POLICY: Policy = [1.0 / Action::N_ACTIONS as f32; Action::N_ACTIONS];
+    pub const UNIFORM_POLICY: Policy = [1.0 / Action::N_ACTIONS as f32; Action::N_ACTIONS];
 
-    pub fn new(state: State, rng: SmallRng) -> Self {
+    pub fn new(metadata: GameMetadata, state: State, rng: SmallRng) -> Self {
         let root = Rc::new(RefCell::new(Node::new(Weak::new(), state, 0.0)));
         Self {
+            metadata,
             root: root.clone(),
             leaf: root,
             actions: Vec::new(),
@@ -46,7 +50,7 @@ impl MCTS {
         self.root.borrow().visit_count
     }
 
-    pub fn on_received_nn_est(&mut self, mut est: NNEst) {
+    pub fn on_received_nn_est(&mut self, mut est: NNEst, c_exploration: f32) {
         let mut leaf = self.leaf.borrow_mut();
         if let Some(q_actual) = leaf.get_terminal_q_value(est.max_ply, est.avg_ply) {
             // If we've reached a terminal state, backpropagate the actual q value and attempt
@@ -54,7 +58,7 @@ impl MCTS {
             leaf.backpropagate(q_actual);
             drop(leaf); // Drop leaf borrow so we can reassign self.leaf
 
-            self.select_new_leaf(est.c_exploration);
+            self.select_new_leaf(c_exploration);
         } else {
             // Non-terminal state found, proceed with normal expansion
             leaf.state.mask_policy(&mut est.policy_logprobs);
@@ -65,7 +69,7 @@ impl MCTS {
             leaf.backpropagate(est.q);
 
             drop(leaf); // Drop leaf borrow so we can reassign self.leaf
-            self.select_new_leaf(est.c_exploration);
+            self.select_new_leaf(c_exploration);
         }
     }
 
@@ -94,6 +98,7 @@ impl MCTS {
     /// Makes a move, updating the root node to be the child node corresponding to the action.
     /// Stores the previous position and policy in the [Self::moves] vector.
     pub fn make_move(&mut self, action: Action, c_exploration: f32) {
+        let original_root_node = Rc::clone(&self.root);
         let root = self.root.borrow_mut();
         let child_idx = action.to_idx();
 
@@ -103,12 +108,19 @@ impl MCTS {
             .expect("apply_action called on leaf with no children")[child_idx]
             .as_ref()
             .expect("illegal action");
+
+        // Eliminate the child's parent reference
+        child.borrow_mut().parent = Weak::new();
+
         let child = Rc::clone(child);
         drop(root); // Drop root borrow so we can reassign self.root
         self.root = child;
 
         self.select_new_leaf(c_exploration);
-        self.actions.push(action);
+        self.actions.push(MCTSAction {
+            prev_node: original_root_node,
+            action,
+        });
     }
 
     /// Makes a move probabalistically based on the root node's policy.
@@ -122,6 +134,41 @@ impl MCTS {
         let dist = WeightedIndex::new(policy).unwrap();
         let action = Action::ALL[dist.sample(&mut self.rng)];
         self.make_move(action, c_exploration);
+    }
+
+    /// If the root position is a terminal state, returns the Q value of the terminal state.
+    pub fn get_root_terminal_q(&self, max_ply: u8, avg_ply: u8) -> Option<QValue> {
+        self.root.borrow().get_terminal_q_value(max_ply, avg_ply)
+    }
+
+    /// Returns a clone of the current leaf node's state.
+    pub fn leaf_state_cloned(&self) -> State {
+        self.leaf.borrow().state.clone()
+    }
+
+    /// Converts the current sequence of actions into a [GameResult] for training.
+    pub fn to_result(&self) -> GameResult {
+        let root_terminal_q = self
+            .get_root_terminal_q(100, 0)
+            .expect("Calling to_result on non-terminal state");
+
+        GameResult {
+            metadata: self.metadata.clone(),
+            samples: self
+                .actions
+                .iter()
+                .map(
+                    |MCTSAction {
+                         prev_node,
+                         action: _,
+                     }| Sample {
+                        state: prev_node.borrow().state.clone(),
+                        policy: prev_node.borrow().policy(),
+                        q: root_terminal_q,
+                    },
+                )
+                .collect(),
+        }
     }
 }
 
@@ -269,11 +316,18 @@ mod tests {
         cards::Card::*,
         policy::policy_value_for_action,
         state::{tests::assert_can_play_action, StateBuilder, WinCondition},
+        types::NNEst,
     };
 
     use super::*;
     use more_asserts::assert_gt;
     use rand::SeedableRng;
+
+    const GAME_METADATA: GameMetadata = GameMetadata {
+        game_id: 0,
+        player0_id: 0,
+        player1_id: 1,
+    };
 
     /// If we can buy an estate to win, we should do so.
     #[test]
@@ -286,16 +340,18 @@ mod tests {
             .with_win_conditions(&[WinCondition::VictoryPoints(1)])
             .build(&mut rng);
         assert_eq!(state.is_terminal(), None);
-        let mut mcts = MCTS::new(state, rng);
+        let mut mcts = MCTS::new(GAME_METADATA, state, rng);
 
         while mcts.root_visit_count() < 10 {
-            mcts.on_received_nn_est(NNEst {
-                q: 0.0,
-                policy_logprobs: MCTS::UNIFORM_POLICY,
+            mcts.on_received_nn_est(
+                NNEst {
+                    q: 0.0,
+                    policy_logprobs: MCTS::UNIFORM_POLICY,
+                    max_ply: 5,
+                    avg_ply: 3,
+                },
                 c_exploration,
-                max_ply: 5,
-                avg_ply: 3,
-            });
+            );
         }
         let policy = mcts.root.borrow().policy();
         assert_gt!(policy_value_for_action(&policy, &Action::Buy(Estate)), 0.99);
@@ -316,16 +372,18 @@ mod tests {
             .with_win_conditions(&[WinCondition::VictoryPoints(6)])
             .build(&mut rng);
         assert_eq!(state.is_terminal(), None);
-        let mut mcts = MCTS::new(state, rng);
+        let mut mcts = MCTS::new(GAME_METADATA, state, rng);
 
         while mcts.root_visit_count() < 100 {
-            mcts.on_received_nn_est(NNEst {
-                q: 0.0,
-                policy_logprobs: MCTS::UNIFORM_POLICY,
+            mcts.on_received_nn_est(
+                NNEst {
+                    q: 0.0,
+                    policy_logprobs: MCTS::UNIFORM_POLICY,
+                    max_ply: 7,
+                    avg_ply: 3,
+                },
                 c_exploration,
-                max_ply: 7,
-                avg_ply: 3,
-            });
+            );
         }
         let policy = mcts.root.borrow().policy();
         assert_gt!(policy_value_for_action(&policy, &Action::Buy(Gold)), 0.99);
@@ -350,16 +408,18 @@ mod tests {
             .with_win_conditions(&[WinCondition::VictoryPoints(7)])
             .build(&mut rng);
         assert_eq!(state.is_terminal(), None);
-        let mut mcts = MCTS::new(state, rng);
+        let mut mcts = MCTS::new(GAME_METADATA, state, rng);
 
         while mcts.root_visit_count() < 100 {
-            mcts.on_received_nn_est(NNEst {
-                q: 0.0,
-                policy_logprobs: MCTS::UNIFORM_POLICY,
+            mcts.on_received_nn_est(
+                NNEst {
+                    q: 0.0,
+                    policy_logprobs: MCTS::UNIFORM_POLICY,
+                    max_ply: 7,
+                    avg_ply: 3,
+                },
                 c_exploration,
-                max_ply: 7,
-                avg_ply: 3,
-            });
+            );
         }
         let policy = mcts.root.borrow().policy();
         assert_gt!(
