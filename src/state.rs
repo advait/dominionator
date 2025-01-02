@@ -1,6 +1,7 @@
 use crate::{
     actions::Action,
-    cards::{Card, Card::*},
+    cards::Card::{self, *},
+    embeddings::{pile_to_tokens, PileType, Token},
     policy::Policy,
     types::Ply,
 };
@@ -10,16 +11,18 @@ use std::{
     fmt::{Debug, Display, Formatter, Result},
 };
 
+pub type Pile = BTreeMap<Card, u8>;
+
 #[derive(Clone)]
 pub struct State {
-    hand: Vec<Card>,
-    draw: Vec<Card>,
-    discard: Vec<Card>,
-    kingdom: BTreeMap<Card, u8>,
-    unspent_gold: u8,
-    unspent_buys: u8,
+    pub hand: Vec<Card>,
+    pub draw: Vec<Card>,
+    pub discard: Vec<Card>,
+    pub kingdom: Pile,
+    pub unspent_gold: u8,
+    pub unspent_buys: u8,
     pub ply: Ply,
-    win_conditions: Vec<WinCondition>,
+    pub win_conditions: Vec<WinCondition>,
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -278,7 +281,45 @@ impl State {
         }
         next
     }
+
+    pub fn to_tokens(&self) -> Vec<Token> {
+        let mut tokens = Vec::new();
+        tokens.extend(pile_to_tokens(
+            self.kingdom.keys(),
+            &vec_to_pile(&self.hand),
+            PileType::Hand,
+        ));
+        tokens.extend(pile_to_tokens(
+            self.kingdom.keys(),
+            &vec_to_pile(&self.draw),
+            PileType::Draw,
+        ));
+        tokens.extend(pile_to_tokens(
+            self.kingdom.keys(),
+            &vec_to_pile(&self.discard),
+            PileType::Discard,
+        ));
+        tokens.extend(pile_to_tokens(
+            self.kingdom.keys(),
+            &self.kingdom,
+            PileType::Kingdom,
+        ));
+
+        // TODO: Replace all vecs with Piles
+        // TODO: Add pile summary tokens
+
+        tokens
+    }
 }
+
+fn vec_to_pile(vec: &Vec<Card>) -> Pile {
+    let mut map = BTreeMap::new();
+    for card in vec {
+        *map.entry(card.clone()).or_insert(0) += 1;
+    }
+    map
+}
+
 #[cfg(test)]
 pub mod tests {
     use super::*;
