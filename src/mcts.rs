@@ -1,4 +1,5 @@
 use std::{
+    array,
     cell::RefCell,
     rc::{Rc, Weak},
 };
@@ -7,7 +8,7 @@ use rand::{distributions::WeightedIndex, prelude::Distribution, rngs::SmallRng};
 
 use crate::{
     actions::Action,
-    policy::{apply_temperature, softmax, Policy, PolicyExt},
+    policy::{Policy, PolicyExt},
     state::State,
     types::{GameMetadata, GameResult, NNEst, QValue, Sample},
     utils::OrdF32,
@@ -62,7 +63,7 @@ impl MCTS {
         } else {
             // Non-terminal state found, proceed with normal expansion
             leaf.state.mask_policy(&mut est.policy_logprobs);
-            let policy_est = softmax(est.policy_logprobs);
+            let policy_est = est.policy_logprobs.softmax();
             leaf.expand(self.leaf.clone(), policy_est, &mut self.rng);
             // TODO: If we've expanded a leaf that has a single child (only one valid action), then
             // we can preemptively take that action and select that child as the new leaf.
@@ -130,7 +131,7 @@ impl MCTS {
     /// the most lucrative moves.
     pub fn make_random_move(&mut self, temperature: f32, c_exploration: f32) {
         let policy = self.root.borrow().policy();
-        let policy = apply_temperature(&policy, temperature);
+        let policy = policy.apply_temperature(temperature);
         let dist = WeightedIndex::new(policy).unwrap();
         let action = Action::ALL[dist.sample(&mut self.rng)];
         self.make_move(action, c_exploration);
@@ -265,17 +266,12 @@ impl Node {
     /// Uses the child counts as weights to determine the implied policy from this position.
     fn policy(&self) -> Policy {
         if let Some(children) = &self.children {
-            let child_counts = Policy::from_iter(children.iter().map(|maybe_child| {
-                maybe_child
+            let child_counts = array::from_fn(|i| {
+                children[i]
                     .as_ref()
-                    .map_or(0., |child_ref| child_ref.borrow().visit_count as f32)
-            }));
-            let child_counts_sum = child_counts.iter().sum::<f32>();
-            if child_counts_sum == 0.0 {
-                MCTS::UNIFORM_POLICY
-            } else {
-                softmax(child_counts)
-            }
+                    .map_or(0.0, |child| child.borrow().visit_count as f32)
+            });
+            child_counts.softmax()
         } else {
             MCTS::UNIFORM_POLICY
         }
