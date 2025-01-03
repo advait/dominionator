@@ -48,6 +48,20 @@ pub fn apply_temperature(policy_probs: &Policy, temperature: f32) -> Policy {
     policy_log.map(|p| (p - policy_log_sum_exp).exp().clamp(0.0, 1.0))
 }
 
+pub trait PolicyExt {
+    fn from_iter<T: IntoIterator<Item = f32>>(iter: T) -> Self;
+}
+
+impl PolicyExt for Policy {
+    fn from_iter<T: IntoIterator<Item = f32>>(iter: T) -> Self {
+        let mut policy = [0.0; Action::N_ACTIONS];
+        for (i, p) in iter.into_iter().enumerate() {
+            policy[i] = p;
+        }
+        policy
+    }
+}
+
 pub fn policy_from_iter<I: IntoIterator<Item = f32>>(iter: I) -> Policy {
     let mut policy = [0.0; Action::N_ACTIONS];
     for (i, p) in iter.into_iter().enumerate() {
@@ -56,7 +70,7 @@ pub fn policy_from_iter<I: IntoIterator<Item = f32>>(iter: I) -> Policy {
     policy
 }
 
-pub fn policy_value_for_action(policy: &Policy, action: &Action) -> f32 {
+pub fn policy_value_for_action(policy: &Policy, action: Action) -> f32 {
     policy[action.to_idx()]
 }
 

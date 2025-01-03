@@ -7,7 +7,7 @@ use rand::{distributions::WeightedIndex, prelude::Distribution, rngs::SmallRng};
 
 use crate::{
     actions::Action,
-    policy::{apply_temperature, policy_from_iter, softmax, Policy},
+    policy::{apply_temperature, softmax, Policy, PolicyExt},
     state::State,
     types::{GameMetadata, GameResult, NNEst, QValue, Sample},
     utils::OrdF32,
@@ -265,7 +265,7 @@ impl Node {
     /// Uses the child counts as weights to determine the implied policy from this position.
     fn policy(&self) -> Policy {
         if let Some(children) = &self.children {
-            let child_counts = policy_from_iter(children.iter().map(|maybe_child| {
+            let child_counts = Policy::from_iter(children.iter().map(|maybe_child| {
                 maybe_child
                     .as_ref()
                     .map_or(0., |child_ref| child_ref.borrow().visit_count as f32)
@@ -335,7 +335,7 @@ mod tests {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[Copper, Copper, Copper, Copper, Copper])
+            .with_discard(&[(Copper, 5)])
             .with_kingdom(&[(Copper, 1), (Estate, 1)])
             .with_win_conditions(&[WinCondition::VictoryPoints(1)])
             .build(&mut rng);
@@ -354,7 +354,7 @@ mod tests {
             );
         }
         let policy = mcts.root.borrow().policy();
-        assert_gt!(policy_value_for_action(&policy, &Action::Buy(Estate)), 0.99);
+        assert_gt!(policy_value_for_action(&policy, Action::Buy(Estate)), 0.99);
 
         // Buy the estate
         mcts.make_random_move(0.0, c_exploration);
@@ -367,7 +367,7 @@ mod tests {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[Copper, Copper, Copper, Copper, Silver])
+            .with_discard(&[(Copper, 5), (Silver, 1)])
             .with_kingdom(&[(Copper, 5), (Silver, 5), (Gold, 5), (Province, 1)])
             .with_win_conditions(&[WinCondition::VictoryPoints(6)])
             .build(&mut rng);
@@ -386,7 +386,7 @@ mod tests {
             );
         }
         let policy = mcts.root.borrow().policy();
-        assert_gt!(policy_value_for_action(&policy, &Action::Buy(Gold)), 0.99);
+        assert_gt!(policy_value_for_action(&policy, Action::Buy(Gold)), 0.99);
         assert_can_play_action(&mcts.root.borrow().state, Action::Buy(Province), false);
     }
 
@@ -396,7 +396,7 @@ mod tests {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[Gold, Gold, Silver])
+            .with_discard(&[(Gold, 2), (Silver, 1)])
             .with_kingdom(&[
                 (Copper, 5),
                 (Silver, 5),
@@ -423,7 +423,7 @@ mod tests {
         }
         let policy = mcts.root.borrow().policy();
         assert_gt!(
-            policy_value_for_action(&policy, &Action::Buy(Province)),
+            policy_value_for_action(&policy, Action::Buy(Province)),
             0.99
         );
     }
@@ -435,21 +435,19 @@ mod tests {
         let avg_ply = 30;
 
         // Non-terminal state should return None
-        let non_terminal_state = State::new(
-            &[Copper, Copper, Copper, Copper, Copper],
-            &[(Copper, 1), (Estate, 1)],
-            &[WinCondition::VictoryPoints(100)],
-            &mut rng,
-        );
+        let non_terminal_state = StateBuilder::new()
+            .with_discard(&[(Copper, 5)])
+            .with_kingdom(&[(Copper, 1), (Estate, 1)])
+            .with_win_conditions(&[WinCondition::VictoryPoints(100)])
+            .build(&mut rng);
         let node = Node::new(Weak::new(), non_terminal_state, 0.0);
         assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), None);
 
-        let terminal_state = State::new(
-            &[Copper, Copper, Copper, Copper, Copper],
-            &[(Copper, 1), (Estate, 1)],
-            &[WinCondition::VictoryPoints(0)],
-            &mut rng,
-        );
+        let terminal_state = StateBuilder::new()
+            .with_discard(&[(Copper, 5)])
+            .with_kingdom(&[(Copper, 1), (Estate, 1)])
+            .with_win_conditions(&[WinCondition::VictoryPoints(0)])
+            .build(&mut rng);
         let test_cases = [
             (0, Some(1.0)),           // Terminal state at ply 0 should return 1.0
             (avg_ply, Some(0.0)),     // Terminal state at avg_ply should return 0.0

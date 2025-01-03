@@ -2,6 +2,7 @@ pub mod actions;
 pub mod cards;
 pub mod embeddings;
 pub mod mcts;
+pub mod pile;
 pub mod policy;
 pub mod self_play;
 pub mod state;

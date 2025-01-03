@@ -1,3 +1,5 @@
+use crate::cards::Card;
+
 macro_rules! define_enum_with_variant_count {
     (
         $(#[$meta:meta])*
@@ -133,8 +135,6 @@ impl ContinuousCount {
     }
 }
 
-use crate::{cards::Card, state::Pile};
-
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Embedding {
     Padding,
@@ -185,27 +185,6 @@ impl TokenExt for Token {
     }
 }
 
-pub fn pile_to_tokens<'a, I: Iterator<Item = &'a Card>>(
-    all_cards: I,
-    pile: &Pile,
-    pile_type: PileType,
-) -> Vec<Token> {
-    let total = pile.values().sum::<u8>();
-    all_cards
-        .map(|&card| {
-            let count = *pile.get(&card).unwrap_or(&0);
-            [
-                Embedding::PileType(pile_type),
-                Embedding::Card(card),
-                Embedding::DiscreteCount(DiscreteCount::from_count(count)),
-            ]
-            .into_iter()
-            .chain(ContinuousCount::from_counts(count, total))
-            .collect::<Token>()
-        })
-        .collect()
-}
-
 impl FromIterator<Embedding> for Token {
     fn from_iter<I: IntoIterator<Item = Embedding>>(iter: I) -> Self {
         let mut embeddings = [Embedding::Padding; N_EMBEDDINGS_PER_TOKEN];
@@ -227,7 +206,7 @@ impl Embedding {
         + ContinuousCount::N_VARIANTS;
 
     pub const ALL: [Self; Self::N_EMBEDDINGS] = {
-        let mut embeddings = [Self::Card(Card::ALL[0]); Self::N_EMBEDDINGS];
+        let mut embeddings = [Self::Padding; Self::N_EMBEDDINGS];
 
         // idx=0 is reserved for padding
         let mut idx = 1;
@@ -303,10 +282,10 @@ mod tests {
             .collect()
     }
 
-    fn assert_has_token_for_card(tokens: &[&Token], card: &Card, expected_count: u8) {
+    fn assert_has_token_for_card(tokens: &[&Token], card: Card, expected_count: u8) {
         let token = tokens
             .iter()
-            .find(|t| t.get_card() == Some(*card))
+            .find(|t| t.get_card() == Some(card))
             .unwrap_or_else(|| panic!("No token found for card {:?}", card));
         assert_eq!(
             token.get_discrete_count(),
@@ -320,8 +299,18 @@ mod tests {
     fn test_embedding_indices() {
         // Test that indices are sequential
         for (i, embedding) in Embedding::ALL.iter().enumerate() {
-            assert_eq!(embedding.to_idx(), i);
-            assert_eq!(Embedding::from_idx(i), Some(*embedding));
+            assert_eq!(
+                embedding.to_idx(),
+                i,
+                "Embedding index mismatch for {:?}",
+                embedding
+            );
+            assert_eq!(
+                Embedding::from_idx(i),
+                Some(*embedding),
+                "Embedding index mismatch for {:?}",
+                embedding
+            );
         }
 
         // Test out of bounds
@@ -345,20 +334,31 @@ mod tests {
 
         let embeddings = state.to_tokens();
 
-        // Each pile should have tokens for all kingdom cards
-        for pile_type in PileType::ALL {
-            let pile_tokens = get_tokens_for_pile_type(&embeddings, pile_type);
-            assert_eq!(
-                pile_tokens.len(),
-                state.kingdom.len(),
-                "{:?} should have tokens for all kingdom cards",
-                pile_type
-            );
+        // Hand, Draw, Discard should be empty
+        assert_eq!(
+            get_tokens_for_pile_type(&embeddings, PileType::Hand).len(),
+            0
+        );
+        assert_eq!(
+            get_tokens_for_pile_type(&embeddings, PileType::Draw).len(),
+            0
+        );
+        assert_eq!(
+            get_tokens_for_pile_type(&embeddings, PileType::Discard).len(),
+            0
+        );
 
-            // All counts should be zero
-            for card in state.kingdom.keys() {
-                assert_has_token_for_card(&pile_tokens, card, 0);
-            }
+        // Each pile should have tokens for all kingdom cards
+        let pile_tokens = get_tokens_for_pile_type(&embeddings, PileType::Kingdom);
+        assert_eq!(
+            pile_tokens.len(),
+            state.kingdom.unique_card_count(),
+            "Kingdom should have tokens for all kingdom cards"
+        );
+
+        // All counts should be zero
+        for &card in state.kingdom.keys() {
+            assert_has_token_for_card(&pile_tokens, card, 0);
         }
     }
 
@@ -366,7 +366,7 @@ mod tests {
     fn test_simple_hand_embeddings() {
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[Copper, Copper, Estate])
+            .with_discard(&[(Copper, 2), (Estate, 1)])
             .with_kingdom(&[(Copper, 1), (Estate, 1), (Silver, 0)]) // Include Silver with count 0
             .build(&mut rng);
 
@@ -376,13 +376,13 @@ mod tests {
         // Should have tokens for all kingdom cards
         assert_eq!(
             hand_tokens.len(),
-            state.kingdom.len(),
+            state.kingdom.unique_card_count(),
             "Should have one token per kingdom card"
         );
 
         // Verify counts for cards in hand
-        for card in state.kingdom.keys() {
-            let count = state.hand.iter().filter(|&&c| c == *card).count() as u8;
+        for &card in state.kingdom.keys() {
+            let count = state.hand[card];
             assert_has_token_for_card(&hand_tokens, card, count);
         }
     }
@@ -406,8 +406,8 @@ mod tests {
         );
 
         // Verify counts for all cards in kingdom
-        for (card, count) in &kingdom_cards {
-            assert_has_token_for_card(&kingdom_tokens, card, *count);
+        for (card, count) in kingdom_cards {
+            assert_has_token_for_card(&kingdom_tokens, card, count);
         }
     }
 
@@ -425,20 +425,18 @@ mod tests {
             let pile_tokens = get_tokens_for_pile_type(&embeddings, pile_type);
             assert_eq!(
                 pile_tokens.len(),
-                state.kingdom.len(),
+                state.kingdom.unique_card_count(),
                 "{:?} should have tokens for all kingdom cards",
                 pile_type
             );
 
             // Verify counts based on pile type
-            for card in state.kingdom.keys() {
+            for &card in state.kingdom.keys() {
                 let expected_count = match pile_type {
-                    PileType::Kingdom => *state.kingdom.get(card).unwrap_or(&0),
-                    PileType::Hand => state.hand.iter().filter(|&&c| c == *card).count() as u8,
-                    PileType::Draw => state.draw.iter().filter(|&&c| c == *card).count() as u8,
-                    PileType::Discard => {
-                        state.discard.iter().filter(|&&c| c == *card).count() as u8
-                    }
+                    PileType::Kingdom => state.kingdom[card],
+                    PileType::Hand => state.hand[card],
+                    PileType::Draw => state.draw[card],
+                    PileType::Discard => state.discard[card],
                 };
                 assert_has_token_for_card(&pile_tokens, card, expected_count);
             }
@@ -447,7 +445,7 @@ mod tests {
         // Total number of tokens should be number of pile types * number of kingdom cards
         assert_eq!(
             embeddings.len(),
-            PileType::N_VARIANTS * state.kingdom.len(),
+            PileType::N_VARIANTS * state.kingdom.unique_card_count(),
             "Total number of tokens should be pile_types * kingdom_cards"
         );
     }

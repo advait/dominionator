@@ -1,23 +1,19 @@
 use crate::{
     actions::Action,
     cards::Card::{self, *},
-    embeddings::{pile_to_tokens, PileType, Token},
+    embeddings::{PileType, Token},
+    pile::Pile,
     policy::Policy,
     types::Ply,
 };
-use rand::{rngs::SmallRng, seq::SliceRandom};
-use std::{
-    collections::BTreeMap,
-    fmt::{Debug, Display, Formatter, Result},
-};
-
-pub type Pile = BTreeMap<Card, u8>;
+use rand::rngs::SmallRng;
+use std::fmt::{Debug, Display, Formatter, Result};
 
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct State {
-    pub hand: Vec<Card>,
-    pub draw: Vec<Card>,
-    pub discard: Vec<Card>,
+    pub hand: Pile,
+    pub draw: Pile,
+    pub discard: Pile,
     pub kingdom: Pile,
     pub unspent_gold: u8,
     pub unspent_buys: u8,
@@ -31,7 +27,7 @@ pub enum WinCondition {
 }
 
 pub struct StateBuilder<'a> {
-    discard: &'a [Card],
+    discard: &'a [(Card, u8)],
     kingdom: &'a [(Card, u8)],
     win_conditions: &'a [WinCondition],
 }
@@ -47,9 +43,7 @@ impl<'a> Default for StateBuilder<'a> {
 }
 
 impl<'a> StateBuilder<'a> {
-    const DEFAULT_DECK: [Card; 10] = [
-        Copper, Copper, Copper, Copper, Copper, Copper, Copper, Estate, Estate, Estate,
-    ];
+    const DEFAULT_DECK: [(Card, u8); 2] = [(Copper, 7), (Estate, 3)];
 
     const DEFAULT_KINGDOM: [(Card, u8); 6] = [
         (Copper, 60),
@@ -66,7 +60,7 @@ impl<'a> StateBuilder<'a> {
         Self::default()
     }
 
-    pub fn with_discard(mut self, discard: &'a [Card]) -> Self {
+    pub fn with_discard(mut self, discard: &'a [(Card, u8)]) -> Self {
         self.discard = discard;
         self
     }
@@ -97,26 +91,10 @@ impl Display for State {
         write!(
             f,
             "hand: {}\ndraw: {}\ndiscard: {}\nkingdom: {}\ngold {}, buys {}\nply {}\nterminal: {}",
-            self.hand
-                .iter()
-                .map(|card| card.short_name())
-                .collect::<Vec<_>>()
-                .join(" "),
-            self.draw
-                .iter()
-                .map(|card| card.short_name())
-                .collect::<Vec<_>>()
-                .join(" "),
-            self.discard
-                .iter()
-                .map(|card| card.short_name())
-                .collect::<Vec<_>>()
-                .join(" "),
-            self.kingdom
-                .iter()
-                .map(|(card, count)| format!("{} {}", card.short_name(), count))
-                .collect::<Vec<_>>()
-                .join(", "),
+            &self.hand,
+            &self.draw,
+            &self.discard,
+            &self.kingdom,
             self.unspent_gold,
             self.unspent_buys,
             self.ply,
@@ -133,16 +111,16 @@ impl State {
     pub const MAX_PLY: Ply = 100;
 
     pub fn new(
-        discard: &[Card],
+        discard: &[(Card, u8)],
         kingdom: &[(Card, u8)],
         win_conditions: &[WinCondition],
         rng: &mut SmallRng,
     ) -> Self {
         let mut ret = Self {
-            hand: Vec::default(),
-            draw: Vec::default(),
-            discard: discard.to_vec(),
-            kingdom: BTreeMap::from_iter(kingdom.into_iter().cloned()),
+            hand: Pile::default(),
+            draw: Pile::default(),
+            discard: Pile::from_iter(discard.into_iter().cloned()),
+            kingdom: Pile::from_iter(kingdom.into_iter().cloned()).with_preserve_zero(true),
             unspent_gold: 0,
             unspent_buys: 1,
             ply: 0,
@@ -158,8 +136,7 @@ impl State {
         self.ply += 1;
 
         // Discard hand
-        self.discard.extend(self.hand.iter());
-        self.hand.clear();
+        self.discard.drain_from(&mut self.hand);
 
         // Reset unspent gold and buys
         self.unspent_gold = 0;
@@ -168,15 +145,6 @@ impl State {
         // Draw new hand
         self.draw(Self::HAND_SIZE, rng);
 
-        self
-    }
-
-    /// Reshuffles the discard pile into the draw pile.
-    fn reshuffle_discard(&mut self, rng: &mut SmallRng) -> &mut Self {
-        let mut cards = self.discard.drain(..).collect::<Vec<_>>();
-        cards.extend(self.draw.drain(..));
-        cards.shuffle(&mut *rng);
-        self.draw = cards;
         self
     }
 
@@ -189,10 +157,10 @@ impl State {
                 if self.discard.is_empty() {
                     return self;
                 }
-                self.reshuffle_discard(rng);
+                self.draw.drain_from(&mut self.discard);
             }
 
-            let card = self.draw.pop().unwrap();
+            let card = self.draw.draw(rng);
             self.unspent_gold += card.treasure();
             self.hand.push(card);
         }
@@ -210,7 +178,7 @@ impl State {
                 action,
                 self.unspent_gold >= card.cost()
                     && self.unspent_buys > 0
-                    && self.kingdom.get(&card).cloned().unwrap_or(0) > 0,
+                    && self.kingdom.contains(card),
             ),
         })
     }
@@ -232,11 +200,7 @@ impl State {
     }
 
     pub fn victory_points(&self) -> u8 {
-        [&self.hand, &self.draw, &self.discard]
-            .into_iter()
-            .flatten()
-            .map(|card| card.victory())
-            .sum()
+        self.hand.victory_points() + self.draw.victory_points() + self.discard.victory_points()
     }
 
     /// Returns the ply at which the game is terminal, or None if it is not terminal.
@@ -267,11 +231,10 @@ impl State {
             Action::Play(_) => unimplemented!(),
             Action::Trash(_) => unimplemented!(),
             Action::Buy(card) => {
-                if next.kingdom.get(&card).expect("card not in kingdom") == &0 {
-                    dbg!(&next);
+                if !next.kingdom.contains(card) {
                     panic!("Cannot buy unavailable card {}", card.name());
                 }
-                next.kingdom.entry(card).and_modify(|count| *count -= 1);
+                next.kingdom.take(card);
                 assert!(next.unspent_gold >= card.cost(), "Cannot afford card");
                 next.unspent_gold -= card.cost();
                 assert!(next.unspent_buys > 0, "Tried to buy card with no buys left");
@@ -284,40 +247,15 @@ impl State {
 
     pub fn to_tokens(&self) -> Vec<Token> {
         let mut tokens = Vec::new();
-        tokens.extend(pile_to_tokens(
-            self.kingdom.keys(),
-            &vec_to_pile(&self.hand),
-            PileType::Hand,
-        ));
-        tokens.extend(pile_to_tokens(
-            self.kingdom.keys(),
-            &vec_to_pile(&self.draw),
-            PileType::Draw,
-        ));
-        tokens.extend(pile_to_tokens(
-            self.kingdom.keys(),
-            &vec_to_pile(&self.discard),
-            PileType::Discard,
-        ));
-        tokens.extend(pile_to_tokens(
-            self.kingdom.keys(),
-            &self.kingdom,
-            PileType::Kingdom,
-        ));
+        tokens.extend(self.hand.to_tokens(PileType::Hand));
+        tokens.extend(self.draw.to_tokens(PileType::Draw));
+        tokens.extend(self.discard.to_tokens(PileType::Discard));
+        tokens.extend(self.kingdom.to_tokens(PileType::Kingdom));
 
-        // TODO: Replace all vecs with Piles
         // TODO: Add pile summary tokens
 
         tokens
     }
-}
-
-fn vec_to_pile(vec: &Vec<Card>) -> Pile {
-    let mut map = BTreeMap::new();
-    for card in vec {
-        *map.entry(card.clone()).or_insert(0) += 1;
-    }
-    map
 }
 
 #[cfg(test)]
@@ -364,7 +302,7 @@ pub mod tests {
             assert_can_play_action(&state, Action::Buy(Copper), true);
             let state = state.apply_action(Action::Buy(Copper), &mut rng);
             assert_eq!(state.unspent_gold, unspent_gold - Copper.cost());
-            assert!(state.discard.contains(&&Copper));
+            assert!(state.discard.contains(Copper));
 
             // Can't buy additional cards
             assert_can_play_action(&state, Action::Buy(Copper), false);
@@ -377,8 +315,8 @@ pub mod tests {
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 0);
             assert_eq!(state.discard.len(), 6); // Includes new copper
-            assert_eq!(state.kingdom[&Copper], 9);
-            assert_eq!(state.kingdom[&Estate], 10);
+            assert_eq!(state.kingdom[Copper], 9);
+            assert_eq!(state.kingdom[Estate], 10);
         }
 
         #[test]
@@ -393,7 +331,7 @@ pub mod tests {
             assert_can_play_action(&state, Action::Buy(Estate), true);
             let state = state.apply_action(Action::Buy(Estate), &mut rng);
             assert_eq!(state.unspent_gold, unspent_gold - Estate.cost());
-            assert!(state.discard.contains(&&Estate));
+            assert!(state.discard.contains(Estate));
 
             // Can't buy additional cards
             assert_can_play_action(&state, Action::Buy(Copper), false);
@@ -406,16 +344,16 @@ pub mod tests {
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 0);
             assert_eq!(state.discard.len(), 6); // Includes new estate
-            assert_eq!(state.kingdom.len(), 2);
-            assert_eq!(state.kingdom[&Copper], 10);
-            assert_eq!(state.kingdom[&Estate], 9);
+            assert_eq!(state.kingdom.unique_card_count(), 2);
+            assert_eq!(state.kingdom[Copper], 10);
+            assert_eq!(state.kingdom[Estate], 9);
         }
 
         #[test]
         fn test_victory(seed in 0..u64::MAX) {
             let mut rng = SmallRng::seed_from_u64(seed);
             let mut state = StateBuilder::new()
-                .with_discard(&[Copper, Copper, Copper, Copper, Copper])
+                .with_discard(&[(Copper, 5), (Estate, 5)])
                 .with_kingdom(&[(Copper, 10), (Estate, 10)])
                 .with_win_conditions(&[WinCondition::VictoryPoints(10)])
                 .build(&mut rng);
