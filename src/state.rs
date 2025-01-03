@@ -116,11 +116,13 @@ impl State {
         win_conditions: &[WinCondition],
         rng: &mut SmallRng,
     ) -> Self {
+        let kingdom = kingdom.into_iter().cloned().collect::<Pile>();
+
         let mut ret = Self {
-            hand: Pile::default(),
-            draw: Pile::default(),
-            discard: Pile::from_iter(discard.into_iter().cloned()),
-            kingdom: Pile::from_iter(kingdom.into_iter().cloned()).with_preserve_zero(true),
+            hand: Pile::from_kingdom(&kingdom),
+            draw: Pile::from_kingdom(&kingdom),
+            discard: Pile::from_kingdom(&kingdom).with_counts(discard),
+            kingdom: kingdom,
             unspent_gold: 0,
             unspent_buys: 1,
             ply: 0,
@@ -176,9 +178,7 @@ impl State {
             Action::Trash(_) => (action, false),
             Action::Buy(card) => (
                 action,
-                self.unspent_gold >= card.cost()
-                    && self.unspent_buys > 0
-                    && self.kingdom.contains(card),
+                self.unspent_gold >= card.cost() && self.unspent_buys > 0 && self.kingdom[card] > 0,
             ),
         })
     }

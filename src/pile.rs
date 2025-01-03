@@ -15,22 +15,21 @@ use crate::{
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
 pub struct Pile {
     counts: BTreeMap<Card, u8>,
-    preserve_zero: bool,
 }
 
 impl Pile {
-    pub fn new(preserve_zero: bool) -> Self {
-        Self {
-            counts: BTreeMap::new(),
-            preserve_zero,
-        }
+    /// Creates a new Pile with all the cards from the kingdom but with a count of 0.
+    pub fn from_kingdom(kingdom: &Pile) -> Self {
+        kingdom.iter().map(|(card, _count)| (card, 0)).collect()
     }
 
-    /// Setting the preserve_zero flag preserves entries with a count of 0.
-    /// This is useful for kingdom piles, where we want to keep track of empty slots.
-    /// If preserve_zero is false, then all entries with a count of 0 are removed.
-    pub fn with_preserve_zero(mut self, preserve_zero: bool) -> Self {
-        self.preserve_zero = preserve_zero;
+    /// Adds the given cards to the pile with the given counts.
+    pub fn with_counts(mut self, counts: &[(Card, u8)]) -> Self {
+        for &(card, count) in counts {
+            for _ in 0..count {
+                self.push(card);
+            }
+        }
         self
     }
 
@@ -43,11 +42,6 @@ impl Pile {
         let card = *self.counts.keys().nth(index).unwrap();
         self.take(card);
         card
-    }
-
-    /// Returns an iterator over the cards in the pile.
-    pub fn keys(&self) -> impl Iterator<Item = &Card> {
-        self.counts.keys()
     }
 
     /// Returns true if the pile contains at least one of the given card.
@@ -68,15 +62,8 @@ impl Pile {
     /// Takes a card from the pile, returning the remining count of the card in the pile.
     pub fn take(&mut self, card: Card) -> u8 {
         match self.counts.get(&card) {
-            None => panic!("Cannot take card from empty pile"),
-            Some(1) => {
-                if self.preserve_zero {
-                    self.counts.insert(card, 0);
-                } else {
-                    self.counts.remove(&card);
-                }
-                0
-            }
+            None => panic!("Card not present in pile"),
+            Some(0) => panic!("Cannot take card from empty pile"),
             Some(&count) => {
                 self.counts.insert(card, count - 1);
                 count - 1
@@ -98,24 +85,25 @@ impl Pile {
                 self.push(card);
             }
         }
-        if self.preserve_zero {
-            consumed.counts = consumed
-                .iter()
-                .map(|(card, _)| (card, 0))
-                .collect::<BTreeMap<_, _>>();
-        } else {
-            consumed.counts.clear();
-        }
+        consumed.counts = consumed
+            .iter()
+            .map(|(card, _)| (card, 0))
+            .collect::<BTreeMap<_, _>>();
     }
 
+    /// Iterates over the cards in the pile including those with a count of 0.
     pub fn iter(&self) -> PileIter {
         PileIter {
             iter: self.counts.iter(),
         }
     }
 
-    /// Returns the number of unique types of cards in the pile.
-    /// If preserve_zero is true then this will include cards with a count of 0.
+    /// Returns an iterator over the cards in the pile including those with a count of 0.
+    pub fn iter_cards(&self) -> impl Iterator<Item = &Card> {
+        self.counts.keys()
+    }
+
+    /// Returns the number of unique types of cards in the pile including those with a count of 0.
     pub fn unique_card_count(&self) -> usize {
         self.counts.len()
     }
@@ -171,7 +159,6 @@ impl FromIterator<(Card, u8)> for Pile {
     fn from_iter<T: IntoIterator<Item = (Card, u8)>>(iter: T) -> Self {
         Self {
             counts: BTreeMap::from_iter(iter),
-            preserve_zero: false,
         }
     }
 }
@@ -180,7 +167,6 @@ impl FromIterator<Card> for Pile {
     fn from_iter<T: IntoIterator<Item = Card>>(iter: T) -> Self {
         Self {
             counts: BTreeMap::from_iter(iter.into_iter().map(|card| (card, 1))),
-            preserve_zero: false,
         }
     }
 }

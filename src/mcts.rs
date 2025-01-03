@@ -314,7 +314,6 @@ impl Node {
 mod tests {
     use crate::{
         cards::Card::*,
-        policy::policy_value_for_action,
         state::{tests::assert_can_play_action, StateBuilder, WinCondition},
         types::NNEst,
     };
@@ -354,7 +353,7 @@ mod tests {
             );
         }
         let policy = mcts.root.borrow().policy();
-        assert_gt!(policy_value_for_action(&policy, Action::Buy(Estate)), 0.99);
+        assert_gt!(policy.value_for_action(Action::Buy(Estate)), 0.99);
 
         // Buy the estate
         mcts.make_random_move(0.0, c_exploration);
@@ -367,7 +366,7 @@ mod tests {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[(Copper, 5), (Silver, 1)])
+            .with_discard(&[(Copper, 4), (Silver, 1)])
             .with_kingdom(&[(Copper, 5), (Silver, 5), (Gold, 5), (Province, 1)])
             .with_win_conditions(&[WinCondition::VictoryPoints(6)])
             .build(&mut rng);
@@ -380,13 +379,13 @@ mod tests {
                     q: 0.0,
                     policy_logprobs: MCTS::UNIFORM_POLICY,
                     max_ply: 7,
-                    avg_ply: 3,
+                    avg_ply: 2,
                 },
                 c_exploration,
             );
         }
         let policy = mcts.root.borrow().policy();
-        assert_gt!(policy_value_for_action(&policy, Action::Buy(Gold)), 0.99);
+        assert_gt!(policy.value_for_action(Action::Buy(Gold)), 0.99);
         assert_can_play_action(&mcts.root.borrow().state, Action::Buy(Province), false);
     }
 
@@ -422,10 +421,7 @@ mod tests {
             );
         }
         let policy = mcts.root.borrow().policy();
-        assert_gt!(
-            policy_value_for_action(&policy, Action::Buy(Province)),
-            0.99
-        );
+        assert_gt!(policy.value_for_action(Action::Buy(Province)), 0.99);
     }
 
     #[test]

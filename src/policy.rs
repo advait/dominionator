@@ -50,6 +50,8 @@ pub fn apply_temperature(policy_probs: &Policy, temperature: f32) -> Policy {
 
 pub trait PolicyExt {
     fn from_iter<T: IntoIterator<Item = f32>>(iter: T) -> Self;
+
+    fn value_for_action(&self, action: Action) -> f32;
 }
 
 impl PolicyExt for Policy {
@@ -60,18 +62,10 @@ impl PolicyExt for Policy {
         }
         policy
     }
-}
 
-pub fn policy_from_iter<I: IntoIterator<Item = f32>>(iter: I) -> Policy {
-    let mut policy = [0.0; Action::N_ACTIONS];
-    for (i, p) in iter.into_iter().enumerate() {
-        policy[i] = p;
+    fn value_for_action(&self, action: Action) -> f32 {
+        self[action.to_idx()]
     }
-    policy
-}
-
-pub fn policy_value_for_action(policy: &Policy, action: Action) -> f32 {
-    policy[action.to_idx()]
 }
 
 #[cfg(test)]
@@ -95,7 +89,7 @@ mod tests {
         .prop_filter("all neg infinity not allowed", |policy_logits| {
             !policy_logits.iter().all(|&p| p == f32::NEG_INFINITY)
         })
-        .prop_map(|v| policy_from_iter(v.into_iter()))
+        .prop_map(|v| PolicyExt::from_iter(v.into_iter()))
         .prop_map(|policy| softmax(policy))
     }
 

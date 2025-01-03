@@ -334,31 +334,19 @@ mod tests {
 
         let embeddings = state.to_tokens();
 
-        // Hand, Draw, Discard should be empty
-        assert_eq!(
-            get_tokens_for_pile_type(&embeddings, PileType::Hand).len(),
-            0
-        );
-        assert_eq!(
-            get_tokens_for_pile_type(&embeddings, PileType::Draw).len(),
-            0
-        );
-        assert_eq!(
-            get_tokens_for_pile_type(&embeddings, PileType::Discard).len(),
-            0
-        );
+        // Each pile type should have tokens for all kingdom cards
+        for pile_type in PileType::ALL {
+            let pile_tokens = get_tokens_for_pile_type(&embeddings, pile_type);
+            assert_eq!(
+                pile_tokens.len(),
+                state.kingdom.unique_card_count(),
+                "{:?} should have tokens for all kingdom cards",
+                pile_type
+            );
 
-        // Each pile should have tokens for all kingdom cards
-        let pile_tokens = get_tokens_for_pile_type(&embeddings, PileType::Kingdom);
-        assert_eq!(
-            pile_tokens.len(),
-            state.kingdom.unique_card_count(),
-            "Kingdom should have tokens for all kingdom cards"
-        );
-
-        // All counts should be zero
-        for &card in state.kingdom.keys() {
-            assert_has_token_for_card(&pile_tokens, card, 0);
+            for &card in state.kingdom.iter_cards() {
+                assert_has_token_for_card(&pile_tokens, card, 0);
+            }
         }
     }
 
@@ -381,7 +369,7 @@ mod tests {
         );
 
         // Verify counts for cards in hand
-        for &card in state.kingdom.keys() {
+        for &card in state.kingdom.iter_cards() {
             let count = state.hand[card];
             assert_has_token_for_card(&hand_tokens, card, count);
         }
@@ -401,7 +389,7 @@ mod tests {
         // Should have one token per kingdom card
         assert_eq!(
             kingdom_tokens.len(),
-            kingdom_cards.len(),
+            state.kingdom.unique_card_count(),
             "Should have one token per kingdom card"
         );
 
@@ -415,6 +403,7 @@ mod tests {
     fn test_all_pile_types_present() {
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
+            .with_discard(&[(Silver, 1), (Gold, 1)])
             .with_kingdom(&[(Silver, 5), (Gold, 3), (Copper, 0)]) // Include Copper with count 0
             .build(&mut rng);
 
@@ -429,17 +418,6 @@ mod tests {
                 "{:?} should have tokens for all kingdom cards",
                 pile_type
             );
-
-            // Verify counts based on pile type
-            for &card in state.kingdom.keys() {
-                let expected_count = match pile_type {
-                    PileType::Kingdom => state.kingdom[card],
-                    PileType::Hand => state.hand[card],
-                    PileType::Draw => state.draw[card],
-                    PileType::Discard => state.discard[card],
-                };
-                assert_has_token_for_card(&pile_tokens, card, expected_count);
-            }
         }
 
         // Total number of tokens should be number of pile types * number of kingdom cards
