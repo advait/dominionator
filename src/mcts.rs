@@ -53,7 +53,7 @@ impl MCTS {
 
     pub fn on_received_nn_est(&mut self, mut est: NNEst, c_exploration: f32) {
         let mut leaf = self.leaf.borrow_mut();
-        if let Some(q_actual) = leaf.get_terminal_q_value(est.max_ply, est.avg_ply) {
+        if let Some(q_actual) = leaf.get_terminal_q_value() {
             // If we've reached a terminal state, backpropagate the actual q value and attempt
             // to select a new leaf node.
             leaf.backpropagate(q_actual);
@@ -67,7 +67,7 @@ impl MCTS {
             leaf.expand(self.leaf.clone(), policy_est, &mut self.rng);
             // TODO: If we've expanded a leaf that has a single child (only one valid action), then
             // we can preemptively take that action and select that child as the new leaf.
-            leaf.backpropagate(est.q);
+            leaf.backpropagate(est.ply1_log_neg);
 
             drop(leaf); // Drop leaf borrow so we can reassign self.leaf
             self.select_new_leaf(c_exploration);
@@ -138,8 +138,8 @@ impl MCTS {
     }
 
     /// If the root position is a terminal state, returns the Q value of the terminal state.
-    pub fn get_root_terminal_q(&self, max_ply: u8, avg_ply: u8) -> Option<QValue> {
-        self.root.borrow().get_terminal_q_value(max_ply, avg_ply)
+    pub fn get_root_terminal_q(&self) -> Option<f32> {
+        self.root.borrow().get_terminal_q_value()
     }
 
     /// Returns a clone of the current leaf node's state.
@@ -149,8 +149,11 @@ impl MCTS {
 
     /// Converts the current sequence of actions into a [GameResult] for training.
     pub fn to_result(&self) -> GameResult {
-        let root_terminal_q = self
-            .get_root_terminal_q(100, 0)
+        let terminal_ply = self
+            .root
+            .borrow()
+            .state
+            .is_terminal()
             .expect("Calling to_result on non-terminal state");
 
         GameResult {
@@ -162,10 +165,12 @@ impl MCTS {
                     |MCTSAction {
                          prev_node,
                          action: _,
-                     }| Sample {
-                        state: prev_node.borrow().state.clone(),
-                        policy: prev_node.borrow().policy(),
-                        q: root_terminal_q,
+                     }| {
+                        Sample::new_from_terminal_ply(
+                            prev_node.borrow().state.clone(),
+                            prev_node.borrow().policy(),
+                            terminal_ply,
+                        )
                     },
                 )
                 .collect(),
@@ -205,8 +210,8 @@ impl Node {
     }
 
     /// The exploitation component of the UCT value.
-    pub fn q_value(&self) -> f32 {
-        self.q_sum / (self.visit_count as f32 + 1.0)
+    pub fn q_value(&self) -> QValue {
+        self.q_sum / (self.visit_count as f32 + Self::EPS)
     }
 
     /// The exploration component of the UCT value. Higher visit counts result in lower values.
@@ -228,26 +233,14 @@ impl Node {
         self.q_value() + c_exploration * self.exploration_value()
     }
 
-    /// Returns the Q value of the terminal state between [-1, 1].
+    /// Returns the Q value of the terminal state as a log-ply1 value.
+    /// This Q value is always zero as -log(ply=0 + 1) = 0.
     /// Returns None if the state is not terminal.
-    fn get_terminal_q_value(&self, max_ply: u8, avg_ply: u8) -> Option<QValue> {
+    fn get_terminal_q_value(&self) -> Option<QValue> {
         if self.state.is_terminal().is_none() {
             return None;
         }
-        let ply = self.state.ply as f32;
-        let avg_ply = avg_ply as f32;
-        let max_ply = max_ply as f32;
-
-        // For wins/losses, map ply from [0, max_ply] to [-1, 1]
-        // with avg_ply mapping to 0
-        let q = if ply <= avg_ply {
-            // Early segment: map [0, avg_ply] to [1, 0]
-            1.0 - (ply / avg_ply)
-        } else {
-            // Late segment: map [avg_ply, max_ply] to [0, -1]
-            -(ply - avg_ply) / (max_ply - avg_ply)
-        };
-        Some(q)
+        Some(0.0)
     }
 
     /// Returns the child with the highest UCT value.
@@ -337,16 +330,8 @@ mod tests {
         assert_eq!(state.is_terminal(), None);
         let mut mcts = MCTS::new(GAME_METADATA, state, rng);
 
-        while mcts.root_visit_count() < 10 {
-            mcts.on_received_nn_est(
-                NNEst {
-                    q: 0.0,
-                    policy_logprobs: MCTS::UNIFORM_POLICY,
-                    max_ply: 5,
-                    avg_ply: 3,
-                },
-                c_exploration,
-            );
+        while mcts.root_visit_count() < 100 {
+            mcts.on_received_nn_est(NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY), c_exploration);
         }
         let policy = mcts.root.borrow().policy();
         assert_gt!(policy.value_for_action(Action::Buy(Estate)), 0.99);
@@ -370,15 +355,7 @@ mod tests {
         let mut mcts = MCTS::new(GAME_METADATA, state, rng);
 
         while mcts.root_visit_count() < 100 {
-            mcts.on_received_nn_est(
-                NNEst {
-                    q: 0.0,
-                    policy_logprobs: MCTS::UNIFORM_POLICY,
-                    max_ply: 7,
-                    avg_ply: 2,
-                },
-                c_exploration,
-            );
+            mcts.on_received_nn_est(NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY), c_exploration);
         }
         let policy = mcts.root.borrow().policy();
         assert_gt!(policy.value_for_action(Action::Buy(Gold)), 0.99);
@@ -406,15 +383,7 @@ mod tests {
         let mut mcts = MCTS::new(GAME_METADATA, state, rng);
 
         while mcts.root_visit_count() < 100 {
-            mcts.on_received_nn_est(
-                NNEst {
-                    q: 0.0,
-                    policy_logprobs: MCTS::UNIFORM_POLICY,
-                    max_ply: 7,
-                    avg_ply: 3,
-                },
-                c_exploration,
-            );
+            mcts.on_received_nn_est(NNEst::new_from_ply(3, MCTS::UNIFORM_POLICY), c_exploration);
         }
         let policy = mcts.root.borrow().policy();
         assert_gt!(policy.value_for_action(Action::Buy(Province)), 0.99);
@@ -423,8 +392,6 @@ mod tests {
     #[test]
     fn test_terminal_q_value() {
         let mut rng = SmallRng::seed_from_u64(1);
-        let max_ply = 100;
-        let avg_ply = 30;
 
         // Non-terminal state should return None
         let non_terminal_state = StateBuilder::new()
@@ -433,24 +400,15 @@ mod tests {
             .with_win_conditions(&[WinCondition::VictoryPoints(100)])
             .build(&mut rng);
         let node = Node::new(Weak::new(), non_terminal_state, 0.0);
-        assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), None);
+        assert_eq!(node.get_terminal_q_value(), None);
 
+        // Terminal state should return 0.0
         let terminal_state = StateBuilder::new()
             .with_discard(&[(Copper, 5)])
             .with_kingdom(&[(Copper, 1), (Estate, 1)])
             .with_win_conditions(&[WinCondition::VictoryPoints(0)])
             .build(&mut rng);
-        let test_cases = [
-            (0, Some(1.0)),           // Terminal state at ply 0 should return 1.0
-            (avg_ply, Some(0.0)),     // Terminal state at avg_ply should return 0.0
-            (max_ply, Some(-1.0)),    // Terminal state at max_ply should return -1.0
-            (avg_ply / 2, Some(0.5)), // Terminal state at ply 15 (halfway between 0 and avg_ply) should return 0.5
-            (avg_ply + (max_ply - avg_ply) / 2, Some(-0.5)), // Terminal state at ply 65 (halfway between avg_ply and max_ply) should return -0.5
-        ];
-        for &(ply, expected) in &test_cases {
-            let mut node = Node::new(Weak::new(), terminal_state.clone(), 0.0);
-            node.state.ply = ply;
-            assert_eq!(node.get_terminal_q_value(max_ply, avg_ply), expected);
-        }
+        let node = Node::new(Weak::new(), terminal_state, 0.0);
+        assert_eq!(node.get_terminal_q_value(), Some(0.0));
     }
 }

@@ -44,7 +44,7 @@ class ModelConfig:
 @dataclass
 class Batch:
     state_raw_embeddings: torch.Tensor  # (batch, seq, max_embeddings_per_token)
-    q_target: torch.Tensor  # (batch, 1)
+    ply1_log_neg_target: torch.Tensor  # (batch, 1)
     policy_target_probs: torch.Tensor  # (batch, dim_policy)
 
     @property
@@ -58,20 +58,20 @@ class Batch:
     def __post_init__(self):
         assert (
             self.state_raw_embeddings.shape[0]
-            == self.q_target.shape[0]
+            == self.ply1_log_neg_target.shape[0]
             == self.policy_target_probs.shape[0]
         ), "Batch size mismatch"
 
 
 @dataclass
 class Forward:
-    q: torch.Tensor  # (batch, 1)
+    ply1_log_neg: torch.Tensor  # (batch, 1)
     policy_logits: torch.Tensor  # (batch, dim_policy)
 
 
 @dataclass
 class ForwardNP:
-    q: np.ndarray  # (batch, 1)
+    ply1_log_neg: np.ndarray  # (batch, 1)
     policy_logits: np.ndarray  # (batch, dim_policy)
 
 
@@ -94,14 +94,14 @@ class DominionatorModel(pl.LightningModule):
             num_layers=config.n_transformer_layers,
         )
 
-        self.q_head = nn.Sequential(
+        self.ply_head = nn.Sequential(
             nn.Linear(config.dim_embedding, 1),
-            nn.Tanh(),
+            nn.ReLU(),
         )
         self.policy_head = nn.Linear(config.dim_embedding, config.dim_policy)
 
         # Metrics
-        self.q_loss = torchmetrics.MeanSquaredError()
+        self.ply_loss = torchmetrics.MeanSquaredError()
         self.policy_loss = torchmetrics.KLDivergence(log_prob=False)
 
     def configure_optimizers(self):
@@ -129,11 +129,11 @@ class DominionatorModel(pl.LightningModule):
         # Use the cls token as the state representation
         x = x[:, 0, :]
 
-        # Run the final state through the Q and policy heads
-        q = self.q_head(x)
+        # Run the final state through the ply and policy heads
+        ply1_log_neg = -self.ply_head(x)
         policy_logits = self.policy_head(x)
 
-        return Forward(q=q, policy_logits=policy_logits)
+        return Forward(ply1_log_neg=ply1_log_neg, policy_logits=policy_logits)
 
     def forward_numpy(self, x: np.ndarray) -> ForwardNP:
         """Forward pass for numpy input. Model is run in inference mode. Used for self play."""
@@ -142,21 +142,21 @@ class DominionatorModel(pl.LightningModule):
         with torch.no_grad():
             forward = self.forward(state_set)
         return ForwardNP(
-            q=forward.q.cpu().numpy(),
+            ply1_log_neg=forward.ply1_log_neg.cpu().numpy(),
             policy_logits=forward.policy_logits.cpu().numpy(),
         )
 
     def step(self, batch: Batch, log_prefix: str):
         forward = self.forward(batch.state_raw_embeddings)
 
-        q_loss = self.q_loss(batch.q_target, forward.q)
+        ply_loss = self.ply_loss(batch.ply1_log_neg_target, forward.ply1_log_neg)
 
         policy_pred_probs = torch.softmax(forward.policy_logits, dim=-1)
         policy_loss = self.policy_loss(batch.policy_target_probs, policy_pred_probs)
 
-        self.log(f"{log_prefix}/q_loss", q_loss, prog_bar=True)
+        self.log(f"{log_prefix}/ply_loss", ply_loss, prog_bar=True)
         self.log(f"{log_prefix}/policy_loss", policy_loss, prog_bar=True)
-        return q_loss + policy_loss
+        return ply_loss + policy_loss
 
 
 class EmbeddingBuilder(pl.LightningModule):

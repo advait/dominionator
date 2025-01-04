@@ -12,17 +12,29 @@ pub type ModelID = u64;
 #[derive(Debug, Clone)]
 /// The estimated value and policy of a given position.
 pub struct NNEst {
-    /// The estimated value of the position.
-    pub q: QValue,
+    /// -log(ply_est + 1) where ply_est is the estimated remaining number of turns until game
+    /// completion.
+    pub ply1_log_neg: f32,
 
     /// The estimated policy of the position.
     pub policy_logprobs: Policy,
+}
 
-    /// The maximum ply reached in the MCTS algorithm.
-    pub max_ply: u8,
+impl NNEst {
+    pub fn new_from_ply(ply: u8, policy_logprobs: Policy) -> Self {
+        Self {
+            ply1_log_neg: Self::ply1_log_neg_from_ply(ply),
+            policy_logprobs,
+        }
+    }
 
-    /// The average ply reached in the MCTS algorithm.
-    pub avg_ply: u8,
+    pub fn ply(&self) -> f32 {
+        -(self.ply1_log_neg.exp() - 1.0)
+    }
+
+    pub fn ply1_log_neg_from_ply(ply: u8) -> f32 {
+        -((ply + 1) as f32).ln()
+    }
 }
 
 /// Estimate the value and policy of a batch of states with an NN forward pass.
@@ -51,5 +63,16 @@ pub struct GameResult {
 pub struct Sample {
     pub state: State,
     pub policy: Policy,
-    pub q: QValue,
+    pub ply1_log_neg: f32,
+}
+
+impl Sample {
+    pub fn new_from_terminal_ply(state: State, policy: Policy, terminal_ply: u8) -> Self {
+        let ply1_log_neg = NNEst::ply1_log_neg_from_ply(terminal_ply - state.ply);
+        Self {
+            state,
+            policy,
+            ply1_log_neg,
+        }
+    }
 }

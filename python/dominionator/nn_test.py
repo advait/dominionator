@@ -26,7 +26,7 @@ def new_dummy_batch(batch_size: int = 4, seq_len: int = 3) -> Batch:
     )
     return Batch(
         state_raw_embeddings=state_raw_embeddings,
-        q_target=torch.randn(batch_size, 1),
+        ply1_log_neg_target=torch.rand(batch_size, 1) * 100,
         policy_target_probs=torch.softmax(
             torch.randn(batch_size, config.dim_policy), dim=-1
         ),
@@ -39,7 +39,7 @@ def test_sanity():
 
     # Test forward pass
     forward = model.forward(batch.state_raw_embeddings)
-    assert forward.q.shape == (batch.batch_size, 1)
+    assert forward.ply1_log_neg.shape == (batch.batch_size, 1)
     assert forward.policy_logits.shape == (batch.batch_size, config.dim_policy)
 
     # Test training step
@@ -62,7 +62,7 @@ def test_zero_loss_with_own_outputs():
     # Create batch using model's own outputs as targets
     batch = Batch(
         state_raw_embeddings=batch.state_raw_embeddings,
-        q_target=forward.q,
+        ply1_log_neg_target=forward.ply1_log_neg,
         policy_target_probs=policy_probs.detach().clone(),
     )
 

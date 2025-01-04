@@ -43,8 +43,6 @@ pub fn self_play<E: NNEstT + Send + Sync>(
     max_nn_batch_size: usize,
     n_mcts_iterations: usize,
     c_exploration: f32,
-    max_ply: u8,
-    avg_ply: u8,
 ) -> Vec<GameResult> {
     let n_games = reqs.len();
     let (pb_game_done, pb_nn_eval, pb_mcts_iter) = init_progress_bars(n_games);
@@ -99,8 +97,6 @@ pub fn self_play<E: NNEstT + Send + Sync>(
                         n_mcts_iterations,
                         n_mcts_threads,
                         c_exploration,
-                        max_ply,
-                        avg_ply,
                         pb_game_done,
                         pb_mcts_iter,
                     }
@@ -263,8 +259,6 @@ struct MctsThread {
     n_mcts_iterations: usize,
     n_mcts_threads: usize,
     c_exploration: f32,
-    max_ply: u8,
-    avg_ply: u8,
     pb_game_done: ProgressBar,
     pb_mcts_iter: ProgressBar,
 }
@@ -286,9 +280,7 @@ impl MctsThread {
                 }
 
                 // We have reached the sufficient number of MCTS iterations to make a move.
-                assert!(game
-                    .get_root_terminal_q(self.max_ply, self.avg_ply)
-                    .is_none());
+                assert!(game.get_root_terminal_q().is_none());
 
                 // Make a random move according to the MCTS policy.
                 // If we are in the early game, use a higher temperature to encourage
@@ -296,10 +288,7 @@ impl MctsThread {
                 let temperature = 1.0;
                 game.make_random_move(self.c_exploration, temperature);
 
-                if game
-                    .get_root_terminal_q(self.max_ply, self.avg_ply)
-                    .is_some()
-                {
+                if game.get_root_terminal_q().is_some() {
                     // Game is over. Send to done_queue.
                     self.n_games_remaining.fetch_sub(1, Ordering::Relaxed);
                     self.done_queue_tx.send(game.to_result()).unwrap();
@@ -396,12 +385,7 @@ pub mod tests {
         fn est_states(&self, _model_id: ModelID, pos: Vec<State>) -> Vec<NNEst> {
             assert_le!(pos.len(), MAX_NN_BATCH_SIZE);
             pos.into_iter()
-                .map(|_| NNEst {
-                    policy_logprobs: MCTS::UNIFORM_POLICY,
-                    q: 0.0,
-                    max_ply: 5,
-                    avg_ply: 3,
-                })
+                .map(|_| NNEst::new_from_ply(3, MCTS::UNIFORM_POLICY))
                 .collect()
         }
     }
@@ -410,9 +394,7 @@ pub mod tests {
     fn test_self_play() {
         let n_games = 1;
         let mcts_iterations = 50;
-        let c_exploration = 1.0;
-        let max_ply = 10;
-        let avg_ply = 5;
+        let c_exploration = 2.0;
         let results = self_play(
             UniformEvalPos {},
             (0..n_games)
@@ -425,8 +407,6 @@ pub mod tests {
             MAX_NN_BATCH_SIZE,
             mcts_iterations,
             c_exploration,
-            max_ply,
-            avg_ply,
         );
 
         for result in results {
