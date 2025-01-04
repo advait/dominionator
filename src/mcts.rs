@@ -130,8 +130,12 @@ impl MCTS {
     /// sampled distribution more uniform and values < 1.0 making the sampled distribution favor
     /// the most lucrative moves.
     pub fn make_random_move(&mut self, temperature: f32, c_exploration: f32) {
-        let policy = self.root.borrow().policy_logprobs().exp();
-        let policy = policy.apply_temperature(temperature);
+        let policy = self
+            .root
+            .borrow()
+            .policy_logprobs()
+            .apply_temperature(temperature)
+            .exp();
         let dist = WeightedIndex::new(policy).unwrap();
         let action = Action::ALL[dist.sample(&mut self.rng)];
         self.make_move(action, c_exploration);
@@ -288,13 +292,14 @@ impl Node {
         if self.children.is_some() {
             panic!("expand called on node with children");
         }
+        let policy = policy_logprobs.exp();
 
         let legal_moves = self.state.valid_actions();
         let children: [Option<Rc<RefCell<Node>>>; Action::N_ACTIONS] = std::array::from_fn(|i| {
             let (action, can_play) = legal_moves[i];
             if can_play {
                 let child_state = self.state.apply_action(action, rng);
-                let child = Node::new(Rc::downgrade(&parent_ref), child_state, policy_logprobs[i]);
+                let child = Node::new(Rc::downgrade(&parent_ref), child_state, policy[i]);
                 Some(Rc::new(RefCell::new(child)))
             } else {
                 None

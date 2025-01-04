@@ -12,13 +12,12 @@ pub trait PolicyExt {
     /// Applies log softmax to the policy logits returning a policy in logprob space.
     fn log_softmax(&self) -> Policy;
 
-    /// Applies exp to the policy logprobs returning a policy in [0-1] space.
-    fn exp(&self) -> Policy;
-
-    /// Applies temperature scaling to a policy.
-    /// Expects the policy to be in [0-1] (non-log/prob) space.
+    /// Applies temperature scaling to a policy in logprob space.
     /// Temperature=0.0 is argmax, temperature=1.0 is a noop.
     fn apply_temperature(&self, temperature: f32) -> Policy;
+
+    /// Applies exp to the policy logprobs returning a policy in [0-1] space.
+    fn exp(&self) -> Policy;
 }
 
 impl PolicyExt for Policy {
@@ -47,25 +46,21 @@ impl PolicyExt for Policy {
         shifted.map(|p| p - log_sum_exp)
     }
 
-    fn exp(&self) -> Policy {
-        self.map(|p| p.exp())
-    }
-
     fn apply_temperature(&self, temperature: f32) -> Policy {
-        if temperature == 1.0 || self.iter().all(|&p| p == self[0]) {
-            // Temp 1.0 or uniform policy is noop
-            return self.clone();
-        } else if temperature == 0.0 {
+        if temperature == 0.0 {
             // Temp 0.0 is argmax
             let max = self.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-            let ret = self.map(|p| if p == max { 1.0 } else { 0.0 });
-            let sum = ret.iter().sum::<f32>();
-            return ret.map(|p| p / sum); // Potentially multiple argmaxes
+            let ret = self.map(|p| if p == max { 0.0 } else { f32::NEG_INFINITY });
+            return ret;
         }
 
-        let policy_log = self.map(|p| p.ln() / temperature);
-        let policy_log_sum_exp = policy_log.map(|p| p.exp()).iter().sum::<f32>().ln();
-        policy_log.map(|p| (p - policy_log_sum_exp).exp().clamp(0.0, 1.0))
+        // Scale logprobs by temperature and reapply log_softmax
+        let scaled = self.map(|p| p / temperature);
+        scaled.log_softmax()
+    }
+
+    fn exp(&self) -> Policy {
+        self.map(|p| p.exp())
     }
 }
 
@@ -104,29 +99,28 @@ mod tests {
         /// Temperature of 1.0 should not affect the policy.
         #[test]
         fn temperature_1(policy_logprobs in policy_logprob_strategy()) {
-            let policy = policy_logprobs.exp();
-            let policy_with_temp = policy.apply_temperature(1.0);
-            assert_policy_eq(&policy, &policy_with_temp, 1e-5);
+            let policy_with_temp = policy_logprobs.apply_temperature(1.0);
+            assert_policy_eq(&policy_logprobs, &policy_with_temp, 1e-5);
         }
 
         /// Temperature of 2.0 should change the policy.
         #[test]
         fn temperature_2(policy_logprobs in policy_logprob_strategy()) {
+            let policy_with_temp = policy_logprobs.apply_temperature(2.0);
             let policy = policy_logprobs.exp();
-            let policy_with_temp = policy.apply_temperature(2.0);
-            assert_policy_sum_1(&policy_with_temp);
+            let policy_with_temp_prob = policy_with_temp.exp();
+            assert_policy_sum_1(&policy_with_temp_prob);
             // If policy is nonuniform and there are at least two non-zero probabilities, the
             // policy with temperature should be different from the original policy
             if policy.iter().filter(|&&p| p != CONST_COL_WEIGHT && p > 0.0).count() >= 2 {
-                assert_policy_ne(&policy, &policy_with_temp, 1e-5);
+                assert_policy_ne(&policy, &policy_with_temp_prob, 1e-5);
             }
         }
 
         /// Temperature of 0.0 should be argmax.
         #[test]
         fn temperature_0(policy_logprobs in policy_logprob_strategy()) {
-            let policy = policy_logprobs.exp();
-            let policy_with_temp = policy.apply_temperature(0.0);
+            let policy_with_temp = policy_logprobs.apply_temperature(0.0).exp();
             let max = policy_with_temp.iter().fold(f32::NEG_INFINITY, |a, &b| f32::max(a, b));
             let max_count = policy_with_temp.iter().filter(|&&p| p == max).count() as f32;
             assert_policy_sum_1(&policy_with_temp);
@@ -149,7 +143,7 @@ mod tests {
         let eq = p1
             .iter()
             .zip(p2.iter())
-            .all(|(a, b)| (a - b).abs() < epsilon);
+            .all(|(a, b)| a.is_infinite() && b.is_infinite() || (a - b).abs() < epsilon);
         if !eq {
             panic!("policies are not equal: {:?} {:?}", p1, p2);
         }
@@ -159,7 +153,7 @@ mod tests {
         let ne = p1
             .iter()
             .zip(p2.iter())
-            .any(|(a, b)| (a - b).abs() > epsilon);
+            .any(|(a, b)| a.is_infinite() ^ b.is_infinite() || (a - b).abs() > epsilon);
         if !ne {
             panic!("policies are equal: {:?} {:?}", p1, p2);
         }
