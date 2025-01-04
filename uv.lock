@@ -343,7 +343,6 @@ dependencies = [
     { name = "numpy" },
     { name = "pytest" },
     { name = "pytorch-lightning" },
-    { name = "torchmetrics" },
 ]
 
 [package.dev-dependencies]
@@ -366,7 +365,6 @@ requires-dist = [
     { name = "numpy", specifier = ">=2.2.1" },
     { name = "pytest", specifier = ">=8.3.4" },
     { name = "pytorch-lightning", specifier = ">=2.5.0.post0" },
-    { name = "torchmetrics", specifier = ">=1.6.1" },
 ]
 
 [package.metadata.requires-dev]
