@@ -62,16 +62,16 @@ pub struct GameResult {
 #[derive(Debug, Clone)]
 pub struct Sample {
     pub state: State,
-    pub policy: Policy,
+    pub policy_logprobs: Policy,
     pub ply1_log_neg: f32,
 }
 
 impl Sample {
-    pub fn new_from_terminal_ply(state: State, policy: Policy, terminal_ply: u8) -> Self {
+    pub fn new_from_terminal_ply(state: State, policy_logprobs: Policy, terminal_ply: u8) -> Self {
         let ply1_log_neg = NNEst::ply1_log_neg_from_ply(terminal_ply - state.ply);
         Self {
             state,
-            policy,
+            policy_logprobs,
             ply1_log_neg,
         }
     }

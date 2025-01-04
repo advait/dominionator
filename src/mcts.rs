@@ -63,8 +63,8 @@ impl MCTS {
         } else {
             // Non-terminal state found, proceed with normal expansion
             leaf.state.mask_policy(&mut est.policy_logprobs);
-            let policy_est = est.policy_logprobs.softmax();
-            leaf.expand(self.leaf.clone(), policy_est, &mut self.rng);
+            let policy_logprob_est = est.policy_logprobs.log_softmax();
+            leaf.expand(self.leaf.clone(), policy_logprob_est, &mut self.rng);
             // TODO: If we've expanded a leaf that has a single child (only one valid action), then
             // we can preemptively take that action and select that child as the new leaf.
             leaf.backpropagate(est.ply1_log_neg);
@@ -130,7 +130,7 @@ impl MCTS {
     /// sampled distribution more uniform and values < 1.0 making the sampled distribution favor
     /// the most lucrative moves.
     pub fn make_random_move(&mut self, temperature: f32, c_exploration: f32) {
-        let policy = self.root.borrow().policy();
+        let policy = self.root.borrow().policy_logprobs().exp();
         let policy = policy.apply_temperature(temperature);
         let dist = WeightedIndex::new(policy).unwrap();
         let action = Action::ALL[dist.sample(&mut self.rng)];
@@ -168,7 +168,7 @@ impl MCTS {
                      }| {
                         Sample::new_from_terminal_ply(
                             prev_node.borrow().state.clone(),
-                            prev_node.borrow().policy(),
+                            prev_node.borrow().policy_logprobs(),
                             terminal_ply,
                         )
                     },
@@ -257,14 +257,14 @@ impl Node {
     }
 
     /// Uses the child counts as weights to determine the implied policy from this position.
-    fn policy(&self) -> Policy {
+    fn policy_logprobs(&self) -> Policy {
         if let Some(children) = &self.children {
             let child_counts = array::from_fn(|i| {
                 children[i]
                     .as_ref()
                     .map_or(0.0, |child| child.borrow().visit_count as f32)
             });
-            child_counts.softmax()
+            child_counts.log_softmax()
         } else {
             MCTS::UNIFORM_POLICY
         }
@@ -279,7 +279,12 @@ impl Node {
         }
     }
 
-    fn expand(&mut self, parent_ref: Rc<RefCell<Node>>, policy_probs: Policy, rng: &mut SmallRng) {
+    fn expand(
+        &mut self,
+        parent_ref: Rc<RefCell<Node>>,
+        policy_logprobs: Policy,
+        rng: &mut SmallRng,
+    ) {
         if self.children.is_some() {
             panic!("expand called on node with children");
         }
@@ -289,7 +294,7 @@ impl Node {
             let (action, can_play) = legal_moves[i];
             if can_play {
                 let child_state = self.state.apply_action(action, rng);
-                let child = Node::new(Rc::downgrade(&parent_ref), child_state, policy_probs[i]);
+                let child = Node::new(Rc::downgrade(&parent_ref), child_state, policy_logprobs[i]);
                 Some(Rc::new(RefCell::new(child)))
             } else {
                 None
@@ -333,7 +338,7 @@ mod tests {
         while mcts.root_visit_count() < 100 {
             mcts.on_received_nn_est(NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY), c_exploration);
         }
-        let policy = mcts.root.borrow().policy();
+        let policy = mcts.root.borrow().policy_logprobs().exp();
         assert_gt!(policy.value_for_action(Action::Buy(Estate)), 0.99);
 
         // Buy the estate
@@ -357,7 +362,7 @@ mod tests {
         while mcts.root_visit_count() < 100 {
             mcts.on_received_nn_est(NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY), c_exploration);
         }
-        let policy = mcts.root.borrow().policy();
+        let policy = mcts.root.borrow().policy_logprobs().exp();
         assert_gt!(policy.value_for_action(Action::Buy(Gold)), 0.99);
         assert_can_play_action(&mcts.root.borrow().state, Action::Buy(Province), false);
     }
@@ -385,7 +390,7 @@ mod tests {
         while mcts.root_visit_count() < 100 {
             mcts.on_received_nn_est(NNEst::new_from_ply(3, MCTS::UNIFORM_POLICY), c_exploration);
         }
-        let policy = mcts.root.borrow().policy();
+        let policy = mcts.root.borrow().policy_logprobs().exp();
         assert_gt!(policy.value_for_action(Action::Buy(Province)), 0.99);
     }
 
