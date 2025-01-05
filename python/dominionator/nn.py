@@ -1,3 +1,4 @@
+from typing import List
 import einops
 import numpy as np
 from dataclasses import dataclass
@@ -70,9 +71,9 @@ class Forward:
 
 
 @dataclass
-class ForwardNP:
-    ply1_log_neg: np.ndarray  # (batch, 1)
-    policy_logprobs: np.ndarray  # (batch, dim_policy)
+class ForwardItem:
+    ply1_log_neg: float  # (batch, 1)
+    policy_logprobs: List[float]
 
 
 class DominionatorModel(pl.LightningModule):
@@ -134,16 +135,22 @@ class DominionatorModel(pl.LightningModule):
 
         return Forward(ply1_log_neg=ply1_log_neg, policy_logprobs=policy_logprobs)
 
-    def forward_numpy(self, x: np.ndarray) -> ForwardNP:
+    def forward_numpy(self, x: np.ndarray | List[List[float]]) -> List[ForwardItem]:
         """Forward pass for numpy input. Model is run in inference mode. Used for self play."""
         self.eval()
-        state_set = torch.from_numpy(x).to(self.device)
+        tensor = torch.tensor(x).to(self.device)
         with torch.no_grad():
-            forward = self.forward(state_set)
-        return ForwardNP(
-            ply1_log_neg=forward.ply1_log_neg.cpu().numpy(),
-            policy_logprobs=forward.policy_logprobs.cpu().numpy(),
-        )
+            forward = self.forward(tensor)
+
+        return [
+            ForwardItem(
+                ply1_log_neg=ply1_log_neg.cpu().item(),
+                policy_logprobs=policy_logprobs.cpu().tolist(),
+            )
+            for (ply1_log_neg, policy_logprobs) in zip(
+                forward.ply1_log_neg, forward.policy_logprobs
+            )
+        ]
 
     def step(self, batch: Batch, log_prefix: str):
         forward = self.forward(batch.state_raw_embeddings)

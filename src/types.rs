@@ -1,3 +1,5 @@
+use pyo3::prelude::*;
+
 use crate::{policy::Policy, state::State};
 
 /// The number of turns that have been played in the game.
@@ -37,14 +39,21 @@ impl NNEst {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct NNEstParams {
+    pub model_id: ModelID,
+    pub states: Vec<State>,
+}
+
 /// Estimate the value and policy of a batch of states with an NN forward pass.
 /// The ordering of the results corresponds to the ordering of the input states.
 pub trait NNEstT {
-    fn est_states(&self, model_id: ModelID, states: Vec<State>) -> Vec<NNEst>;
+    fn est_states(&self, params: NNEstParams) -> Vec<NNEst>;
 }
 
 /// Metadata about a game.
 #[derive(Debug, Clone, Default)]
+#[pyclass]
 pub struct GameMetadata {
     pub game_id: u64,
     pub player0_id: ModelID,
@@ -53,6 +62,7 @@ pub struct GameMetadata {
 
 /// The finished result of a game.
 #[derive(Debug, Clone)]
+#[pyclass]
 pub struct GameResult {
     pub metadata: GameMetadata,
     pub samples: Vec<Sample>,
@@ -60,6 +70,7 @@ pub struct GameResult {
 
 /// A training sample generated via self-play.
 #[derive(Debug, Clone)]
+#[pyclass]
 pub struct Sample {
     pub state: State,
     pub policy_logprobs: Policy,

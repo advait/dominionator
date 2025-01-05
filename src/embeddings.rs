@@ -2,12 +2,11 @@ use crate::cards::Card;
 
 macro_rules! define_enum_with_variant_count {
     (
-        $(#[$meta:meta])*
         $vis:vis enum $name:ident {
             $( $variant:ident ),* $(,)?
         }
     ) => {
-        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         $vis enum $name {
             $( $variant ),*
         }
@@ -31,14 +30,13 @@ macro_rules! define_enum_with_variant_count {
     };
 
     (
-        $(#[$meta:meta])*
         $vis:vis enum $name:ident {
             $( $variant:ident(f32) ),* $(,)?
         }
     ) => {
-        $(#[$meta])*
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
         $vis enum $name {
-            $( $variant ( f32 ) ),*
+            $( $variant ),*
         }
 
         impl $name {
@@ -53,7 +51,7 @@ macro_rules! define_enum_with_variant_count {
 
             pub const ALL: [Self; Self::N_VARIANTS] = [
                 $(
-                    Self::$variant(0.0),
+                    Self::$variant,
                 )*
             ];
         }
@@ -61,7 +59,6 @@ macro_rules! define_enum_with_variant_count {
 }
 
 define_enum_with_variant_count! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum PileType {
         Hand,
         Draw,
@@ -71,7 +68,6 @@ define_enum_with_variant_count! {
 }
 
 define_enum_with_variant_count! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
     pub enum DiscreteCount {
         Zero,
         One,
@@ -112,7 +108,6 @@ impl DiscreteCount {
 }
 
 define_enum_with_variant_count! {
-    #[derive(Debug, Clone, Copy, PartialEq)]
     pub enum ContinuousCount {
         N(f32),
         LogN(f32),
@@ -122,15 +117,22 @@ define_enum_with_variant_count! {
 }
 
 impl ContinuousCount {
-    pub fn from_counts(count: u8, total: u8) -> [Embedding; 4] {
-        let n = count as f32;
-        let total = total as f32;
-        let p = n / total;
+    pub fn from_counts(_count: u8, _total: u8) -> [Embedding; 4] {
+        // TODO: Fix issue with f32 values not being able to implement Eq/Hash
+        // let n = count as f32;
+        // let total = total as f32;
+        // let p = n / total;
+        // [
+        //     Embedding::ContinuousCount(ContinuousCount::N(n)),
+        //     Embedding::ContinuousCount(ContinuousCount::P(p)),
+        //     Embedding::ContinuousCount(ContinuousCount::LogN(n.ln())),
+        //     Embedding::ContinuousCount(ContinuousCount::LogP(p.ln())),
+        // ]
         [
-            Embedding::ContinuousCount(ContinuousCount::N(n)),
-            Embedding::ContinuousCount(ContinuousCount::P(p)),
-            Embedding::ContinuousCount(ContinuousCount::LogN(n.ln())),
-            Embedding::ContinuousCount(ContinuousCount::LogP(p.ln())),
+            Embedding::Padding,
+            Embedding::Padding,
+            Embedding::Padding,
+            Embedding::Padding,
         ]
     }
 }
@@ -148,11 +150,13 @@ pub const N_EMBEDDINGS_PER_TOKEN: usize = 7;
 
 pub type Token = [Embedding; N_EMBEDDINGS_PER_TOKEN];
 
-pub trait TokenExt {
+pub trait TokenExt: Sized {
     fn get_pile_type(&self) -> Option<PileType>;
     fn get_card(&self) -> Option<Card>;
     fn get_discrete_count(&self) -> Option<DiscreteCount>;
     fn get_continuous_count(&self) -> Option<ContinuousCount>;
+    fn to_token_indices(tokens: &[Self]) -> Vec<[usize; N_EMBEDDINGS_PER_TOKEN]>;
+    fn from_token_indices(indices: &[[usize; N_EMBEDDINGS_PER_TOKEN]]) -> Vec<Self>;
 }
 
 impl TokenExt for Token {
@@ -182,6 +186,20 @@ impl TokenExt for Token {
             Embedding::ContinuousCount(c) => Some(c),
             _ => None,
         })
+    }
+
+    fn to_token_indices(tokens: &[Self]) -> Vec<[usize; N_EMBEDDINGS_PER_TOKEN]> {
+        tokens
+            .iter()
+            .map(|token| token.map(|embedding| embedding.to_idx()))
+            .collect()
+    }
+
+    fn from_token_indices(indices: &[[usize; N_EMBEDDINGS_PER_TOKEN]]) -> Vec<Token> {
+        indices
+            .iter()
+            .map(|indices| indices.map(|i| Embedding::from_idx(i).unwrap()))
+            .collect()
     }
 }
 
@@ -332,7 +350,7 @@ mod tests {
             .with_kingdom(&[(Copper, 0), (Estate, 0)]) // Empty but defined kingdom
             .build(&mut rng);
 
-        let embeddings = state.to_tokens();
+        let embeddings = Token::from_token_indices(&state.to_tokens_indices());
 
         // Each pile type should have tokens for all kingdom cards
         for pile_type in PileType::ALL {
@@ -358,7 +376,7 @@ mod tests {
             .with_kingdom(&[(Copper, 1), (Estate, 1), (Silver, 0)]) // Include Silver with count 0
             .build(&mut rng);
 
-        let embeddings = state.to_tokens();
+        let embeddings = Token::from_token_indices(&state.to_tokens_indices());
         let hand_tokens = get_tokens_for_pile_type(&embeddings, PileType::Hand);
 
         // Should have tokens for all kingdom cards
@@ -383,7 +401,7 @@ mod tests {
             .with_kingdom(&kingdom_cards)
             .build(&mut rng);
 
-        let embeddings = state.to_tokens();
+        let embeddings = Token::from_token_indices(&state.to_tokens_indices());
         let kingdom_tokens = get_tokens_for_pile_type(&embeddings, PileType::Kingdom);
 
         // Should have one token per kingdom card
@@ -407,7 +425,7 @@ mod tests {
             .with_kingdom(&[(Silver, 5), (Gold, 3), (Copper, 0)]) // Include Copper with count 0
             .build(&mut rng);
 
-        let embeddings = state.to_tokens();
+        let embeddings = Token::from_token_indices(&state.to_tokens_indices());
 
         // Each pile type should have tokens for all kingdom cards
         for pile_type in PileType::ALL {

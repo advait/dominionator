@@ -1,7 +1,7 @@
 use crate::{
     actions::Action,
     cards::Card::{self, *},
-    embeddings::{PileType, Token},
+    embeddings::{PileType, TokenExt, N_EMBEDDINGS_PER_TOKEN},
     pile::Pile,
     policy::Policy,
     types::Ply,
@@ -245,7 +245,7 @@ impl State {
         next
     }
 
-    pub fn to_tokens(&self) -> Vec<Token> {
+    pub fn to_tokens_indices(&self) -> Vec<[usize; N_EMBEDDINGS_PER_TOKEN]> {
         let mut tokens = Vec::new();
         tokens.extend(self.hand.to_tokens(PileType::Hand));
         tokens.extend(self.draw.to_tokens(PileType::Draw));
@@ -254,7 +254,7 @@ impl State {
 
         // TODO: Add pile summary tokens
 
-        tokens
+        TokenExt::to_token_indices(&tokens)
     }
 }
 

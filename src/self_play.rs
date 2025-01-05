@@ -15,7 +15,7 @@ use rand::{rngs::SmallRng, SeedableRng};
 use crate::{
     mcts::MCTS,
     state::{State, StateBuilder},
-    types::{GameMetadata, GameResult, ModelID, NNEst, NNEstT},
+    types::{GameMetadata, GameResult, ModelID, NNEst, NNEstParams, NNEstT},
 };
 
 /// Generate training samples with self play and MCTS.
@@ -213,14 +213,17 @@ impl<E: NNEstT> NNThread<E> {
             .max_by_key(|(_, positions)| positions.len())
             .map(|(model_id, _)| *model_id)
             .unwrap();
-        let pos = model_pos[&model_id]
+        let states = model_pos[&model_id]
             .iter()
             .take(self.max_nn_batch_size)
             .cloned()
             .collect::<Vec<_>>();
-        self.pb_nn_eval.inc(pos.len() as u64);
-        let evals = self.eval_pos.est_states(model_id, pos.clone());
-        let eval_map = pos.into_iter().zip(evals).collect::<HashMap<_, _>>();
+        self.pb_nn_eval.inc(states.len() as u64);
+        let evals = self.eval_pos.est_states(NNEstParams {
+            model_id,
+            states: states.clone(),
+        });
+        let eval_map = states.into_iter().zip(evals).collect::<HashMap<_, _>>();
 
         let mut games = Vec::<MCTS>::default();
         mem::swap(&mut self.pending_games, &mut games);
@@ -382,9 +385,11 @@ pub mod tests {
 
     pub struct UniformEvalPos {}
     impl NNEstT for UniformEvalPos {
-        fn est_states(&self, _model_id: ModelID, pos: Vec<State>) -> Vec<NNEst> {
-            assert_le!(pos.len(), MAX_NN_BATCH_SIZE);
-            pos.into_iter()
+        fn est_states(&self, params: NNEstParams) -> Vec<NNEst> {
+            assert_le!(params.states.len(), MAX_NN_BATCH_SIZE);
+            params
+                .states
+                .into_iter()
                 .map(|_| NNEst::new_from_ply(3, MCTS::UNIFORM_POLICY))
                 .collect()
         }

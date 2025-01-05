@@ -4,6 +4,7 @@ use std::{
     rc::{Rc, Weak},
 };
 
+use ordered_float::NotNan;
 use rand::{distributions::WeightedIndex, prelude::Distribution, rngs::SmallRng};
 
 use crate::{
@@ -11,7 +12,6 @@ use crate::{
     policy::{Policy, PolicyExt},
     state::State,
     types::{GameMetadata, GameResult, NNEst, QValue, Sample},
-    utils::OrdF32,
 };
 
 #[derive(Debug)]
@@ -255,7 +255,7 @@ impl Node {
             .flatten()
             .max_by_key(|&child| {
                 let score = child.borrow().uct_value(c_exploration);
-                OrdF32(score)
+                NotNan::new(score).expect("NaN value in Node::best_child")
             })
             .cloned()
     }
