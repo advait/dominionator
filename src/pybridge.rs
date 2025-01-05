@@ -92,6 +92,10 @@ impl PlayGamesResult {
         })
     }
 
+    fn __len__(&self) -> usize {
+        self.results.len()
+    }
+
     /// Splits the results into training and test datasets.
     /// Ensures that whole games end up in either the training set or test set.
     /// Expects `train_frac` to be in [0, 1].

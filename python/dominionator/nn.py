@@ -142,7 +142,7 @@ class DominionatorModel(pl.LightningModule):
         with torch.no_grad():
             forward = self.forward(tensor)
 
-        return [
+        ret = [
             ForwardItem(
                 ply1_log_neg=ply1_log_neg.cpu().item(),
                 policy_logprobs=policy_logprobs.cpu().tolist(),
@@ -151,6 +151,7 @@ class DominionatorModel(pl.LightningModule):
                 forward.ply1_log_neg, forward.policy_logprobs
             )
         ]
+        return ret
 
     def step(self, batch: Batch, log_prefix: str):
         forward = self.forward(batch.state_raw_embeddings)

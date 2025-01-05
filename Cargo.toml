@@ -1,10 +1,10 @@
 [package]
-name = "dominionator"
+name = "dominionator_rust"
 version = "0.1.0"
 edition = "2021"
 
 [lib]
-name = "dominionator"
+name = "dominionator_rust"
 crate-type = ["cdylib"]
 
 [dependencies]
@@ -18,3 +18,5 @@ num_cpus = "1.16.0"
 proptest = "1.6.0"
 rand = { version = "0.8", features = ["small_rng"] }
 ordered-float = "4.6.0"
+log = "0.4.22"
+env_logger = "0.11.6"

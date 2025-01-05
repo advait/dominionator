@@ -60,6 +60,18 @@ pub struct GameMetadata {
     pub player1_id: ModelID,
 }
 
+#[pymethods]
+impl GameMetadata {
+    #[new]
+    fn new(game_id: u64, player0_id: ModelID, player1_id: ModelID) -> Self {
+        GameMetadata {
+            game_id,
+            player0_id,
+            player1_id,
+        }
+    }
+}
+
 /// The finished result of a game.
 #[derive(Debug, Clone)]
 #[pyclass]
