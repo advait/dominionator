@@ -27,7 +27,7 @@ macro_rules! define_actions {
             };
 
             pub const ALL: [Action; Self::N_ACTIONS] = {
-                let mut actions = [Action::EndTurn; Self::N_ACTIONS];
+                let mut actions = [Action::EndPhase; Self::N_ACTIONS];
                 let mut idx = 0;
 
                 // Add simple actions
@@ -86,7 +86,9 @@ macro_rules! define_actions {
 use Action::*;
 
 define_actions! {
-    simple_actions: [EndTurn],
+    simple_actions: [
+        EndPhase,
+    ],
     card_actions: [
         Play(Card),
         Trash(Card),
@@ -113,7 +115,7 @@ mod tests {
 
     #[test]
     fn test_action_display() {
-        assert_eq!(Action::EndTurn.to_string(), "EndTurn");
+        assert_eq!(Action::EndPhase.to_string(), "EndPhase");
         assert_eq!(Action::Play(Silver).to_string(), "Play(S)");
         assert_eq!(Action::Buy(Copper).to_string(), "Buy(C)");
         assert_eq!(Action::Trash(Gold).to_string(), "Trash(G)");
@@ -122,23 +124,23 @@ mod tests {
     #[test]
     fn test_card_specific_actions() {
         // Verify that we have the right number of actions
-        let expected_actions = 1 + // EndTurn
+        let expected_actions = 1 + // EndPhase
             (3 * Card::N_CARDS); // Buy/Play/Trash for each card
         assert_eq!(Action::N_ACTIONS, expected_actions);
 
         // Verify that each card-specific action exists exactly once
-        let mut count_buy = 0;
-        let mut count_play = 0;
-        let mut count_trash = 0;
-
-        for action in Action::ALL {
-            match action {
-                Action::Buy(_) => count_buy += 1,
-                Action::Play(_) => count_play += 1,
-                Action::Trash(_) => count_trash += 1,
-                Action::EndTurn => (),
-            }
-        }
+        let count_buy = Action::ALL
+            .into_iter()
+            .filter(|action| matches!(action, Action::Buy(_)))
+            .count();
+        let count_play = Action::ALL
+            .into_iter()
+            .filter(|action| matches!(action, Action::Play(_)))
+            .count();
+        let count_trash = Action::ALL
+            .into_iter()
+            .filter(|action| matches!(action, Action::Trash(_)))
+            .count();
 
         assert_eq!(count_buy, Card::N_CARDS);
         assert_eq!(count_play, Card::N_CARDS);

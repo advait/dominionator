@@ -9,6 +9,7 @@ macro_rules! define_cards {
                 cost: $cost:literal,
                 treasure: $treasure:literal,
                 victory: $victory:literal,
+                is_action: $is_action:expr,
             }
         ),* $(,)?
     ) => {
@@ -60,6 +61,14 @@ macro_rules! define_cards {
                 }
             }
 
+            pub const fn is_action(&self) -> bool {
+                match self {
+                    $(
+                        Self::$name => $is_action,
+                    )*
+                }
+            }
+
             pub const fn to_idx(&self) -> usize {
                 *self as usize
             }
@@ -92,37 +101,50 @@ define_cards! {
         cost: 0,
         treasure: 1,
         victory: 0,
+        is_action: false,
     },
     Silver: {
         short_name: "S",
         cost: 3,
         treasure: 2,
         victory: 0,
+        is_action: false,
     },
     Gold: {
         short_name: "G",
         cost: 6,
         treasure: 3,
         victory: 0,
+        is_action: false,
     },
     Estate: {
         short_name: "E",
         cost: 2,
         treasure: 0,
         victory: 1,
+        is_action: false,
     },
     Duchy: {
         short_name: "D",
         cost: 5,
         treasure: 0,
         victory: 3,
+        is_action: false,
     },
     Province: {
         short_name: "P",
         cost: 8,
         treasure: 0,
         victory: 6,
-    }
+        is_action: false,
+    },
+    Smithy: {
+        short_name: "Sm",
+        cost: 4,
+        treasure: 0,
+        victory: 0,
+        is_action: true,
+    },
 }
 
 #[cfg(test)]

@@ -116,6 +116,13 @@ impl Pile {
             .sum()
     }
 
+    /// Returns the total amount of treasure in the pile.
+    pub fn treasure(&self) -> u8 {
+        self.iter()
+            .map(|(card, count)| card.treasure() * count)
+            .sum()
+    }
+
     /// Converts the pile into a list of tokens that summarize the pile.
     pub fn to_tokens(&self, pile_type: PileType) -> Vec<Token> {
         let total = self.len();

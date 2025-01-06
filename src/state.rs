@@ -18,8 +18,16 @@ pub struct State {
     pub kingdom: Pile,
     pub unspent_gold: u8,
     pub unspent_buys: u8,
+    pub unspent_actions: u8,
+    pub turn_phase: TurnPhase,
     pub ply: Ply,
     pub win_conditions: Vec<WinCondition>,
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
+pub enum TurnPhase {
+    ActionPhase,
+    BuyPhase,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
@@ -28,6 +36,8 @@ pub enum WinCondition {
 }
 
 pub struct StateBuilder<'a> {
+    hand: HandBuilder<'a>,
+    draw: &'a [(Card, u8)],
     discard: &'a [(Card, u8)],
     kingdom: &'a [(Card, u8)],
     win_conditions: &'a [WinCondition],
@@ -36,11 +46,18 @@ pub struct StateBuilder<'a> {
 impl<'a> Default for StateBuilder<'a> {
     fn default() -> Self {
         Self {
-            discard: &Self::DEFAULT_DECK[..],
-            kingdom: &Self::DEFAULT_KINGDOM[..],
-            win_conditions: &Self::DEFAULT_WIN_CONDITIONS[..],
+            hand: HandBuilder::RandomHand,
+            draw: &Self::DEFAULT_DECK,
+            discard: &[],
+            kingdom: &Self::DEFAULT_KINGDOM,
+            win_conditions: &Self::DEFAULT_WIN_CONDITIONS,
         }
     }
+}
+
+enum HandBuilder<'a> {
+    RandomHand,
+    SpecificHand(&'a [(Card, u8)]),
 }
 
 impl<'a> StateBuilder<'a> {
@@ -61,8 +78,18 @@ impl<'a> StateBuilder<'a> {
         Self::default()
     }
 
+    pub fn with_hand(mut self, hand: &'a [(Card, u8)]) -> Self {
+        self.hand = HandBuilder::SpecificHand(hand);
+        self
+    }
+
     pub fn with_discard(mut self, discard: &'a [(Card, u8)]) -> Self {
         self.discard = discard;
+        self
+    }
+
+    pub fn with_draw(mut self, draw: &'a [(Card, u8)]) -> Self {
+        self.draw = draw;
         self
     }
 
@@ -77,7 +104,23 @@ impl<'a> StateBuilder<'a> {
     }
 
     pub fn build(self, rng: &mut SmallRng) -> State {
-        State::new(self.discard, self.kingdom, self.win_conditions, rng)
+        let hand = match self.hand {
+            HandBuilder::RandomHand => &[],
+            HandBuilder::SpecificHand(hand) => hand,
+        };
+
+        let mut state = State::new(
+            hand,
+            self.draw,
+            self.discard,
+            self.kingdom,
+            self.win_conditions,
+        );
+
+        if matches!(self.hand, HandBuilder::RandomHand) {
+            state.draw(State::HAND_SIZE, rng);
+        }
+        state
     }
 }
 
@@ -112,43 +155,29 @@ impl State {
     pub const MAX_PLY: Ply = 100;
 
     pub fn new(
+        hand: &[(Card, u8)],
+        draw: &[(Card, u8)],
         discard: &[(Card, u8)],
         kingdom: &[(Card, u8)],
         win_conditions: &[WinCondition],
-        rng: &mut SmallRng,
     ) -> Self {
         let kingdom = kingdom.into_iter().cloned().collect::<Pile>();
+        let hand = Pile::from_kingdom(&kingdom).with_counts(hand);
+        let draw = Pile::from_kingdom(&kingdom).with_counts(draw);
+        let discard = Pile::from_kingdom(&kingdom).with_counts(discard);
 
-        let mut ret = Self {
-            hand: Pile::from_kingdom(&kingdom),
-            draw: Pile::from_kingdom(&kingdom),
-            discard: Pile::from_kingdom(&kingdom).with_counts(discard),
-            kingdom: kingdom,
-            unspent_gold: 0,
+        Self {
+            unspent_gold: hand.treasure(),
             unspent_buys: 1,
+            unspent_actions: 1,
+            hand,
+            draw,
+            discard,
+            kingdom,
+            turn_phase: TurnPhase::ActionPhase,
             ply: 0,
             win_conditions: win_conditions.to_vec(),
-        };
-        ret.draw(Self::HAND_SIZE, rng);
-
-        ret
-    }
-
-    /// Increases the ply, discards the hand, draws a new hand, and resets gold/buys.
-    fn new_turn(&mut self, rng: &mut SmallRng) -> &mut Self {
-        self.ply += 1;
-
-        // Discard hand
-        self.discard.drain_from(&mut self.hand);
-
-        // Reset unspent gold and buys
-        self.unspent_gold = 0;
-        self.unspent_buys = 1;
-
-        // Draw new hand
-        self.draw(Self::HAND_SIZE, rng);
-
-        self
+        }
     }
 
     /// Draws `n` cards from the draw pile into the hand.
@@ -173,15 +202,28 @@ impl State {
 
     /// For each possible action, returns a tuple of the action and whether it is valid or not.
     pub fn valid_actions(&self) -> [(Action, bool); Action::N_ACTIONS] {
-        Action::ALL.map(|action| match action {
-            Action::EndTurn => (action, true),
-            Action::Play(_) => (action, false),
-            Action::Trash(_) => (action, false),
-            Action::Buy(card) => (
-                action,
-                self.unspent_gold >= card.cost() && self.unspent_buys > 0 && self.kingdom[card] > 0,
-            ),
-        })
+        match self.turn_phase {
+            TurnPhase::ActionPhase => Action::ALL.map(|action| match action {
+                Action::EndPhase => (action, true),
+                Action::Play(card) => (
+                    action,
+                    card.is_action() && self.hand[card] > 0 && self.unspent_actions > 0,
+                ),
+                Action::Trash(_) => (action, false),
+                Action::Buy(_) => (action, false),
+            }),
+            TurnPhase::BuyPhase => Action::ALL.map(|action| match action {
+                Action::EndPhase => (action, true),
+                Action::Play(_) => (action, false),
+                Action::Trash(_) => (action, false),
+                Action::Buy(card) => (
+                    action,
+                    self.unspent_gold >= card.cost()
+                        && self.unspent_buys > 0
+                        && self.kingdom[card] > 0,
+                ),
+            }),
+        }
     }
 
     pub fn can_play_action(&self, action: Action) -> bool {
@@ -210,35 +252,55 @@ impl State {
             return Some(self.ply);
         }
 
-        for &win_condition in self.win_conditions.iter() {
-            match win_condition {
-                WinCondition::VictoryPoints(target_victory) => {
-                    if self.victory_points() >= target_victory {
-                        return Some(self.ply);
-                    }
-                }
-            }
+        if self.win_conditions.iter().any(|&cond| match cond {
+            WinCondition::VictoryPoints(target) => self.victory_points() >= target,
+        }) {
+            Some(self.ply)
+        } else {
+            None
         }
-        None
     }
 
     /// Applies an action to the state returning the resulting state.
     pub fn apply_action(&self, action: Action, rng: &mut SmallRng) -> Self {
         let mut next = self.clone();
         match action {
-            Action::EndTurn => {
-                next.new_turn(rng);
+            Action::EndPhase => match next.turn_phase {
+                TurnPhase::ActionPhase => {
+                    next.turn_phase = TurnPhase::BuyPhase;
+                }
+                TurnPhase::BuyPhase => {
+                    // When buy phaase is over, perform cleanup
+                    next.turn_phase = TurnPhase::ActionPhase;
+                    next.ply += 1;
+
+                    // Discard hand
+                    next.discard.drain_from(&mut next.hand);
+
+                    // Reset unspent gold and buys
+                    next.unspent_gold = 0;
+                    next.unspent_buys = 1;
+                    next.unspent_actions = 1;
+
+                    // Draw new hand
+                    next.draw(Self::HAND_SIZE, rng);
+                }
+            },
+            Action::Play(card) => {
+                next.unspent_actions -= 1;
+                next.hand.take(card);
+                next.discard.push(card);
+                match card {
+                    Smithy => {
+                        next.draw(3, rng);
+                    }
+                    _ => panic!("Cannot play card {}", card.name()),
+                }
             }
-            Action::Play(_) => unimplemented!(),
             Action::Trash(_) => unimplemented!(),
             Action::Buy(card) => {
-                if !next.kingdom.contains(card) {
-                    panic!("Cannot buy unavailable card {}", card.name());
-                }
                 next.kingdom.take(card);
-                assert!(next.unspent_gold >= card.cost(), "Cannot afford card");
                 next.unspent_gold -= card.cost();
-                assert!(next.unspent_buys > 0, "Tried to buy card with no buys left");
                 next.unspent_buys -= 1;
                 next.discard.push(card);
             }
@@ -283,8 +345,16 @@ pub mod tests {
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 5);
             assert_eq!(state.discard.len(), 0);
-            assert_can_play_action(&state, Action::EndTurn, true);
-            let state = state.apply_action(Action::EndTurn, &mut rng);
+
+            assert_eq!(state.turn_phase, TurnPhase::ActionPhase);
+            assert_can_play_action(&state, Action::EndPhase, true);
+            let state = state.apply_action(Action::EndPhase, &mut rng);
+
+            assert_eq!(state.turn_phase, TurnPhase::BuyPhase);
+            assert_can_play_action(&state, Action::EndPhase, true);
+            let state = state.apply_action(Action::EndPhase, &mut rng);
+
+            assert_eq!(state.turn_phase, TurnPhase::ActionPhase);
             assert_eq!(state.ply, 1);
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 0);
@@ -299,6 +369,11 @@ pub mod tests {
                 .build(&mut rng);
             let unspent_gold = state.unspent_gold;
 
+            assert_eq!(state.turn_phase, TurnPhase::ActionPhase);
+            assert_can_play_action(&state, Action::EndPhase, true);
+            let state = state.apply_action(Action::EndPhase, &mut rng);
+            assert_eq!(state.turn_phase, TurnPhase::BuyPhase);
+
             // Buy a copper
             assert_can_play_action(&state, Action::Buy(Copper), true);
             let state = state.apply_action(Action::Buy(Copper), &mut rng);
@@ -310,8 +385,9 @@ pub mod tests {
             assert_can_play_action(&state, Action::Buy(Estate), false);
 
             // End turn
-            assert_can_play_action(&state, Action::EndTurn, true);
-            let state = state.apply_action(Action::EndTurn, &mut rng);
+            assert_can_play_action(&state, Action::EndPhase, true);
+            let state = state.apply_action(Action::EndPhase, &mut rng);
+            assert_eq!(state.turn_phase, TurnPhase::ActionPhase);
             assert_eq!(state.ply, 1);
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 0);
@@ -328,6 +404,11 @@ pub mod tests {
                 .build(&mut rng);
             let unspent_gold = state.unspent_gold;
 
+            assert_eq!(state.turn_phase, TurnPhase::ActionPhase);
+            assert_can_play_action(&state, Action::EndPhase, true);
+            let state = state.apply_action(Action::EndPhase, &mut rng);
+            assert_eq!(state.turn_phase, TurnPhase::BuyPhase);
+
             // Buy an estate
             assert_can_play_action(&state, Action::Buy(Estate), true);
             let state = state.apply_action(Action::Buy(Estate), &mut rng);
@@ -339,8 +420,9 @@ pub mod tests {
             assert_can_play_action(&state, Action::Buy(Estate), false);
 
             // End turn
-            assert_can_play_action(&state, Action::EndTurn, true);
-            let state = state.apply_action(Action::EndTurn, &mut rng);
+            assert_can_play_action(&state, Action::EndPhase, true);
+            let state = state.apply_action(Action::EndPhase, &mut rng);
+            assert_eq!(state.turn_phase, TurnPhase::ActionPhase);
             assert_eq!(state.ply, 1);
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 0);
@@ -369,8 +451,8 @@ pub mod tests {
                 } else if state.can_play_action(Action::Buy(Copper)) {
                     state = state.apply_action(Action::Buy(Copper), &mut rng);
                 }
-                assert_can_play_action(&state, Action::EndTurn, true);
-                state = state.apply_action(Action::EndTurn, &mut rng);
+                assert_can_play_action(&state, Action::EndPhase, true);
+                state = state.apply_action(Action::EndPhase, &mut rng);
             }
 
             prop_assert!(false, "Failed to reach victory in {} turns", state.ply);

@@ -346,7 +346,8 @@ mod tests {
     fn test_empty_state_embeddings() {
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[])
+            .with_hand(&[])
+            .with_draw(&[])
             .with_kingdom(&[(Copper, 0), (Estate, 0)]) // Empty but defined kingdom
             .build(&mut rng);
 
@@ -372,7 +373,8 @@ mod tests {
     fn test_simple_hand_embeddings() {
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[(Copper, 2), (Estate, 1)])
+            .with_hand(&[(Copper, 2), (Estate, 1)])
+            .with_draw(&[])
             .with_kingdom(&[(Copper, 1), (Estate, 1), (Silver, 0)]) // Include Silver with count 0
             .build(&mut rng);
 
@@ -398,6 +400,8 @@ mod tests {
         let mut rng = SmallRng::seed_from_u64(1);
         let kingdom_cards = [(Copper, 10), (Silver, 5), (Gold, 0)]; // Include Gold with count 0
         let state = StateBuilder::new()
+            .with_hand(&[])
+            .with_draw(&[])
             .with_kingdom(&kingdom_cards)
             .build(&mut rng);
 
@@ -421,7 +425,8 @@ mod tests {
     fn test_all_pile_types_present() {
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[(Silver, 1), (Gold, 1)])
+            .with_hand(&[])
+            .with_draw(&[])
             .with_kingdom(&[(Silver, 5), (Gold, 3), (Copper, 0)]) // Include Copper with count 0
             .build(&mut rng);
 

@@ -327,13 +327,20 @@ mod tests {
         player1_id: 1,
     };
 
+    impl MCTS {
+        fn policy(&self) -> Policy {
+            self.root.borrow().policy_logprobs().exp()
+        }
+    }
+
     /// If we can buy an estate to win, we should do so.
     #[test]
     fn test_obvious_win_buy_estate() {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[(Copper, 5)])
+            .with_hand(&[(Copper, 5)])
+            .with_draw(&[])
             .with_kingdom(&[(Copper, 1), (Estate, 1)])
             .with_win_conditions(&[WinCondition::VictoryPoints(1)])
             .build(&mut rng);
@@ -343,10 +350,13 @@ mod tests {
         while mcts.root_visit_count() < 100 {
             mcts.on_received_nn_est(NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY), c_exploration);
         }
-        let policy = mcts.root.borrow().policy_logprobs().exp();
-        assert_gt!(policy.value_for_action(Action::Buy(Estate)), 0.99);
+
+        // End action phase
+        assert_gt!(mcts.policy().value_for_action(Action::EndPhase), 0.99);
+        mcts.make_random_move(0.0, c_exploration);
 
         // Buy the estate
+        assert_gt!(mcts.policy().value_for_action(Action::Buy(Estate)), 0.99);
         mcts.make_random_move(0.0, c_exploration);
         assert!(mcts.root.borrow().state.is_terminal().is_some());
     }
@@ -357,7 +367,8 @@ mod tests {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[(Copper, 4), (Silver, 1)])
+            .with_hand(&[(Copper, 4), (Silver, 1)])
+            .with_draw(&[])
             .with_kingdom(&[(Copper, 5), (Silver, 5), (Gold, 5), (Province, 1)])
             .with_win_conditions(&[WinCondition::VictoryPoints(6)])
             .build(&mut rng);
@@ -367,18 +378,26 @@ mod tests {
         while mcts.root_visit_count() < 100 {
             mcts.on_received_nn_est(NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY), c_exploration);
         }
-        let policy = mcts.root.borrow().policy_logprobs().exp();
-        assert_gt!(policy.value_for_action(Action::Buy(Gold)), 0.99);
+
+        // End action phase
+        assert_gt!(mcts.policy().value_for_action(Action::EndPhase), 0.99);
+        mcts.make_random_move(0.0, c_exploration);
+
+        // Buy Gold
+        assert_gt!(mcts.policy().value_for_action(Action::Buy(Gold)), 0.99);
+        mcts.make_random_move(0.0, c_exploration);
+
         assert_can_play_action(&mcts.root.borrow().state, Action::Buy(Province), false);
     }
 
-    /// If we can buy a province and gold and the win target is 7vp, we should buy the province.
+    /// If we can buy a province and gold and the win target is 5vp, we should buy the province.
     #[test]
     fn test_buy_province_over_gold() {
         let c_exploration = 2.0;
         let mut rng = SmallRng::seed_from_u64(1);
         let state = StateBuilder::new()
-            .with_discard(&[(Gold, 2), (Silver, 1)])
+            .with_hand(&[(Gold, 2), (Silver, 1)])
+            .with_draw(&[])
             .with_kingdom(&[
                 (Copper, 5),
                 (Silver, 5),
@@ -387,7 +406,7 @@ mod tests {
                 (Duchy, 5),
                 (Province, 5),
             ])
-            .with_win_conditions(&[WinCondition::VictoryPoints(7)])
+            .with_win_conditions(&[WinCondition::VictoryPoints(5)])
             .build(&mut rng);
         assert_eq!(state.is_terminal(), None);
         let mut mcts = MCTS::new(GAME_METADATA, state, rng);
@@ -395,8 +414,38 @@ mod tests {
         while mcts.root_visit_count() < 100 {
             mcts.on_received_nn_est(NNEst::new_from_ply(3, MCTS::UNIFORM_POLICY), c_exploration);
         }
-        let policy = mcts.root.borrow().policy_logprobs().exp();
-        assert_gt!(policy.value_for_action(Action::Buy(Province)), 0.99);
+
+        // End action phase
+        assert_gt!(mcts.policy().value_for_action(Action::EndPhase), 0.99);
+        mcts.make_random_move(0.0, c_exploration);
+
+        // Buy province
+        assert_gt!(mcts.policy().value_for_action(Action::Buy(Province)), 0.99);
+        mcts.make_random_move(0.0, c_exploration);
+        assert_eq!(mcts.root.borrow().state.is_terminal(), Some(0));
+    }
+
+    #[test]
+    fn test_play_smithy_with_low_gold_chance() {
+        let c_exploration = 2.0;
+        let mut rng = SmallRng::seed_from_u64(1);
+        let state = StateBuilder::new()
+            .with_discard(&[])
+            .with_draw(&[(Copper, 10), (Gold, 1)])
+            .with_hand(&[(Smithy, 1), (Copper, 4)])
+            .with_kingdom(&[(Copper, 5), (Gold, 5), (Smithy, 5), (Province, 1)])
+            .with_win_conditions(&[WinCondition::VictoryPoints(6)])
+            .build(&mut rng);
+        assert_eq!(state.is_terminal(), None);
+        let mut mcts = MCTS::new(GAME_METADATA, state, rng);
+
+        while mcts.root_visit_count() < 1000 {
+            mcts.on_received_nn_est(NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY), c_exploration);
+        }
+
+        // Should play Smithy even with low chance of drawing Gold
+        assert_gt!(mcts.policy().value_for_action(Action::Play(Smithy)), 0.99);
+        mcts.make_random_move(0.0, c_exploration);
     }
 
     #[test]
@@ -405,7 +454,8 @@ mod tests {
 
         // Non-terminal state should return None
         let non_terminal_state = StateBuilder::new()
-            .with_discard(&[(Copper, 5)])
+            .with_hand(&[(Copper, 5)])
+            .with_draw(&[])
             .with_kingdom(&[(Copper, 1), (Estate, 1)])
             .with_win_conditions(&[WinCondition::VictoryPoints(100)])
             .build(&mut rng);
@@ -414,7 +464,8 @@ mod tests {
 
         // Terminal state should return 0.0
         let terminal_state = StateBuilder::new()
-            .with_discard(&[(Copper, 5)])
+            .with_hand(&[(Copper, 5)])
+            .with_draw(&[])
             .with_kingdom(&[(Copper, 1), (Estate, 1)])
             .with_win_conditions(&[WinCondition::VictoryPoints(0)])
             .build(&mut rng);
