@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 /// Macro to define a Card enum that encapsulates all the properties of a card.
 macro_rules! define_cards {
     (
@@ -10,7 +12,7 @@ macro_rules! define_cards {
             }
         ),* $(,)?
     ) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
         pub enum Card {
             $(
                 $name,

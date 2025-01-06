@@ -21,7 +21,7 @@ def train(
     lr: float = 1e-3,
     l2_reg: float = 1e-5,
     n_self_play_games: int = 100,
-    n_mcts_iterations: int = 100,
+    n_mcts_iterations: int = 10,
     c_exploration: float = 1.0,
     self_play_batch_size: int = 100,
     training_batch_size: int = 100,

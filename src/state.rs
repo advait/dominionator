@@ -7,9 +7,10 @@ use crate::{
     types::Ply,
 };
 use rand::rngs::SmallRng;
+use serde::{Deserialize, Serialize};
 use std::fmt::{Debug, Display, Formatter, Result};
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub struct State {
     pub hand: Pile,
     pub draw: Pile,
@@ -21,7 +22,7 @@ pub struct State {
     pub win_conditions: Vec<WinCondition>,
 }
 
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash, Serialize, Deserialize)]
 pub enum WinCondition {
     VictoryPoints(u8),
 }

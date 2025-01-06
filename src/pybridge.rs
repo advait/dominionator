@@ -1,4 +1,8 @@
-use pyo3::{prelude::*, types::PyList};
+use pyo3::{
+    prelude::*,
+    types::{PyBytes, PyList},
+};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     self_play::self_play,
@@ -43,10 +47,10 @@ pub fn play_games<'py>(
 }
 
 /// The result of [play_games].
-/// Note we explicitly spcify pyclass(module="dominionator") as the module name is required in
+/// Note we explicitly spcify pyclass(module="dominionator_rust") as the module name is required in
 /// order for pickling to work.
-#[derive(Debug, Clone)]
-#[pyclass(module = "dominionator")]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[pyclass(module = "dominionator_rust")]
 pub struct PlayGamesResult {
     #[pyo3(get)]
     pub results: Vec<GameResult>,
@@ -60,23 +64,26 @@ impl PlayGamesResult {
         PlayGamesResult { results: vec![] }
     }
 
-    fn to_cbor(&self, _py: Python) -> PyResult<PyObject> {
-        todo!()
+    fn to_cbor(&self, py: Python) -> PyResult<PyObject> {
+        let cbor = serde_cbor::to_vec(&self).expect("Failed to serialize PlayGamesResult");
+        Ok(PyBytes::new(py, &cbor).into())
     }
 
     #[staticmethod]
-    fn from_cbor(_py: Python, _cbor: &[u8]) -> PyResult<Self> {
-        todo!()
+    fn from_cbor(_py: Python, cbor: &[u8]) -> PyResult<Self> {
+        Ok(serde_cbor::from_slice(cbor).expect("Failed to deserialize PlayGamesResult"))
     }
 
     /// Used for pickling serialization.
     fn __getstate__(&self, _py: Python) -> PyResult<PyObject> {
-        todo!()
+        self.to_cbor(_py)
     }
 
     /// Used for pickling deserialization.
-    fn __setstate__(&mut self, _py: Python, _state: PyObject) -> PyResult<()> {
-        todo!()
+    fn __setstate__(&mut self, py: Python, state: PyObject) -> PyResult<()> {
+        let cbor: &[u8] = state.extract(py)?;
+        *self = Self::from_cbor(py, cbor)?;
+        Ok(())
     }
 
     /// Combine two PlayGamesResult objects.

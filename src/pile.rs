@@ -5,6 +5,7 @@ use std::{
 };
 
 use rand::{distributions::WeightedIndex, prelude::Distribution, rngs::SmallRng};
+use serde::{Deserialize, Serialize};
 
 use crate::{
     cards::Card,
@@ -12,7 +13,7 @@ use crate::{
 };
 
 /// A pile is a set of cards with a count.
-#[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Default, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Pile {
     counts: BTreeMap<Card, u8>,
 }

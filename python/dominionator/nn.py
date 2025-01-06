@@ -143,9 +143,9 @@ class DominionatorModel(pl.LightningModule):
         )
         total_loss = ply_loss + policy_loss
 
-        self.log(f"{log_prefix}_ply_loss", ply_loss, prog_bar=True)
-        self.log(f"{log_prefix}_policy_loss", policy_loss, prog_bar=True)
-        self.log(f"{log_prefix}_loss", total_loss, prog_bar=True)
+        self.log(f"{log_prefix}_ply_loss", ply_loss, prog_bar=log_prefix == "val")
+        self.log(f"{log_prefix}_policy_loss", policy_loss, prog_bar=log_prefix == "val")
+        self.log(f"{log_prefix}_loss", total_loss, prog_bar=log_prefix == "val")
         return total_loss
 
 

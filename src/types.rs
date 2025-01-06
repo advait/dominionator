@@ -1,4 +1,5 @@
 use pyo3::prelude::*;
+use serde::{Deserialize, Serialize};
 
 use crate::{embeddings::N_EMBEDDINGS_PER_TOKEN, policy::Policy, state::State};
 
@@ -52,7 +53,7 @@ pub trait NNEstT {
 }
 
 /// Metadata about a game.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 #[pyclass]
 pub struct GameMetadata {
     pub game_id: u64,
@@ -73,7 +74,7 @@ impl GameMetadata {
 }
 
 /// The finished result of a game.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[pyclass]
 pub struct GameResult {
     pub metadata: GameMetadata,
@@ -81,7 +82,7 @@ pub struct GameResult {
 }
 
 /// A training sample generated via self-play.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 #[pyclass]
 pub struct Sample {
     pub state: State,
