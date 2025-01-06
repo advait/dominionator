@@ -1,22 +1,10 @@
-import logging
 import warnings
 
-import maturin_import_hook
-from maturin_import_hook.settings import MaturinSettings
 import torch
 import typer
 
 from dominionator.nn import ModelConfig
-from dominionator.training import train_single_gen
-
-logging.basicConfig(format="%(name)s [%(levelname)s] %(message)s", level=logging.DEBUG)
-maturin_import_hook.reset_logger()
-maturin_import_hook.install(
-    settings=MaturinSettings(
-        uv=True,
-    ),
-    enable_automatic_installation=True,
-)
+from dominionator.training import TrainingGen, train_single_gen
 
 import dominionator.dominionator_rust as rust  # noqa: E402 F403  # type: ignore
 
@@ -27,9 +15,9 @@ app = typer.Typer()
 def train(
     base_dir: str = "training",
     device: str = "cuda",
-    dim_embedding: int = 128,
-    n_transformer_heads: int = 8,
-    n_transformer_layers: int = 8,
+    dim_embedding: int = 32,
+    n_transformer_heads: int = 4,
+    n_transformer_layers: int = 3,
     lr: float = 1e-3,
     l2_reg: float = 1e-5,
     n_self_play_games: int = 100,
@@ -47,15 +35,19 @@ def train(
         lr=lr,
         l2_reg=l2_reg,
     )
+    parent_gen = TrainingGen.load_latest_with_default(
+        base_dir,
+        n_mcts_iterations,
+        c_exploration,
+        n_self_play_games,
+        self_play_batch_size,
+        training_batch_size,
+        config,
+    )
     train_single_gen(
         base_dir,
         torch.device(device),
-        config,
-        n_self_play_games,
-        n_mcts_iterations,
-        c_exploration,
-        self_play_batch_size,
-        training_batch_size,
+        parent_gen,
     )
 
 

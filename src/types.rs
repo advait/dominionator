@@ -1,6 +1,6 @@
 use pyo3::prelude::*;
 
-use crate::{policy::Policy, state::State};
+use crate::{embeddings::N_EMBEDDINGS_PER_TOKEN, policy::Policy, state::State};
 
 /// The number of turns that have been played in the game.
 pub type Ply = u8;
@@ -85,7 +85,11 @@ pub struct GameResult {
 #[pyclass]
 pub struct Sample {
     pub state: State,
+
+    #[pyo3(get)]
     pub policy_logprobs: Policy,
+
+    #[pyo3(get)]
     pub ply1_log_neg: f32,
 }
 
@@ -97,5 +101,12 @@ impl Sample {
             policy_logprobs,
             ply1_log_neg,
         }
+    }
+}
+
+#[pymethods]
+impl Sample {
+    pub fn state_to_token_indices(&self) -> Vec<[usize; N_EMBEDDINGS_PER_TOKEN]> {
+        self.state.to_tokens_indices()
     }
 }

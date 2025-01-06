@@ -4,3 +4,6 @@ target/
 
 __pycache__/
 *.so
+
+training/
+lightning_logs/

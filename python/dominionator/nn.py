@@ -43,28 +43,6 @@ class ModelConfig:
 
 
 @dataclass
-class Batch:
-    state_raw_embeddings: torch.Tensor  # (batch, seq, max_embeddings_per_token)
-    ply1_log_neg_target: torch.Tensor  # (batch, 1)
-    policy_target_logprobs: torch.Tensor  # (batch, dim_policy)
-
-    @property
-    def batch_size(self) -> int:
-        return self.state_raw_embeddings.shape[0]
-
-    @property
-    def seq_len(self) -> int:
-        return self.state_raw_embeddings.shape[1]
-
-    def __post_init__(self):
-        assert (
-            self.state_raw_embeddings.shape[0]
-            == self.ply1_log_neg_target.shape[0]
-            == self.policy_target_logprobs.shape[0]
-        ), "Batch size mismatch"
-
-
-@dataclass
 class Forward:
     ply1_log_neg: torch.Tensor  # (batch, 1)
     policy_logprobs: torch.Tensor  # (batch, dim_policy)
@@ -153,7 +131,7 @@ class DominionatorModel(pl.LightningModule):
         ]
         return ret
 
-    def step(self, batch: Batch, log_prefix: str):
+    def step(self, batch: "Batch", log_prefix: str):
         forward = self.forward(batch.state_raw_embeddings)
 
         ply_loss = F.mse_loss(forward.ply1_log_neg, batch.ply1_log_neg_target)
@@ -163,10 +141,12 @@ class DominionatorModel(pl.LightningModule):
             log_target=True,
             reduction="batchmean",
         )
+        total_loss = ply_loss + policy_loss
 
-        self.log(f"{log_prefix}/ply_loss", ply_loss, prog_bar=True)
-        self.log(f"{log_prefix}/policy_loss", policy_loss, prog_bar=True)
-        return ply_loss + policy_loss
+        self.log(f"{log_prefix}_ply_loss", ply_loss, prog_bar=True)
+        self.log(f"{log_prefix}_policy_loss", policy_loss, prog_bar=True)
+        self.log(f"{log_prefix}_loss", total_loss, prog_bar=True)
+        return total_loss
 
 
 class EmbeddingBuilder(pl.LightningModule):
@@ -192,3 +172,28 @@ class EmbeddingBuilder(pl.LightningModule):
         bags = torch.cat([cls_token, bags], dim=1)  # (batch, seq + 1, dim_embedding)
 
         return bags
+
+
+@dataclass
+class Batch:
+    state_raw_embeddings: torch.Tensor  # (batch, seq, max_embeddings_per_token)
+    ply1_log_neg_target: torch.Tensor  # (batch, 1)
+    policy_target_logprobs: torch.Tensor  # (batch, dim_policy)
+
+    @property
+    def batch_size(self) -> int:
+        return self.state_raw_embeddings.shape[0]
+
+    @property
+    def seq_len(self) -> int:
+        return self.state_raw_embeddings.shape[1]
+
+    def __post_init__(self):
+        assert self.state_raw_embeddings.ndim == 3
+        assert self.ply1_log_neg_target.ndim == 2
+        assert self.policy_target_logprobs.ndim == 2
+        assert (
+            self.state_raw_embeddings.shape[0]
+            == self.ply1_log_neg_target.shape[0]
+            == self.policy_target_logprobs.shape[0]
+        ), "Batch size mismatch"
