@@ -312,7 +312,7 @@ impl Node {
 #[cfg(test)]
 mod tests {
     use crate::{
-        cards::Card::*,
+        cards::{Card, Card::*},
         state::{tests::assert_can_play_action, StateBuilder, WinCondition},
         types::NNEst,
     };
@@ -320,133 +320,13 @@ mod tests {
     use super::*;
     use more_asserts::assert_gt;
     use rand::SeedableRng;
+    use ExpectedOutcome::*;
 
     const GAME_METADATA: GameMetadata = GameMetadata {
         game_id: 0,
         player0_id: 0,
         player1_id: 1,
     };
-
-    impl MCTS {
-        fn policy(&self) -> Policy {
-            self.root.borrow().policy_logprobs().exp()
-        }
-    }
-
-    /// If we can buy an estate to win, we should do so.
-    #[test]
-    fn test_obvious_win_buy_estate() {
-        let c_exploration = 2.0;
-        let mut rng = SmallRng::seed_from_u64(1);
-        let state = StateBuilder::new()
-            .with_hand(&[(Copper, 5)])
-            .with_draw(&[])
-            .with_kingdom(&[(Copper, 1), (Estate, 1)])
-            .with_win_conditions(&[WinCondition::VictoryPoints(1)])
-            .build(&mut rng);
-        assert_eq!(state.is_terminal(), None);
-        let mut mcts = MCTS::new(GAME_METADATA, state, rng);
-
-        while mcts.root_visit_count() < 100 {
-            mcts.on_received_nn_est(NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY), c_exploration);
-        }
-
-        // End action phase
-        assert_gt!(mcts.policy().value_for_action(Action::EndPhase), 0.99);
-        mcts.make_random_move(0.0, c_exploration);
-
-        // Buy the estate
-        assert_gt!(mcts.policy().value_for_action(Action::Buy(Estate)), 0.99);
-        mcts.make_random_move(0.0, c_exploration);
-        assert!(mcts.root.borrow().state.is_terminal().is_some());
-    }
-
-    /// If we can buy a Gold, Silver, and Copper, we should buy Gold.
-    #[test]
-    fn test_obvious_win_buy_gold() {
-        let c_exploration = 2.0;
-        let mut rng = SmallRng::seed_from_u64(1);
-        let state = StateBuilder::new()
-            .with_hand(&[(Copper, 4), (Silver, 1)])
-            .with_draw(&[])
-            .with_kingdom(&[(Copper, 5), (Silver, 5), (Gold, 5), (Province, 1)])
-            .with_win_conditions(&[WinCondition::VictoryPoints(6)])
-            .build(&mut rng);
-        assert_eq!(state.is_terminal(), None);
-        let mut mcts = MCTS::new(GAME_METADATA, state, rng);
-
-        while mcts.root_visit_count() < 100 {
-            mcts.on_received_nn_est(NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY), c_exploration);
-        }
-
-        // End action phase
-        assert_gt!(mcts.policy().value_for_action(Action::EndPhase), 0.99);
-        mcts.make_random_move(0.0, c_exploration);
-
-        // Buy Gold
-        assert_gt!(mcts.policy().value_for_action(Action::Buy(Gold)), 0.99);
-        mcts.make_random_move(0.0, c_exploration);
-
-        assert_can_play_action(&mcts.root.borrow().state, Action::Buy(Province), false);
-    }
-
-    /// If we can buy a province and gold and the win target is 5vp, we should buy the province.
-    #[test]
-    fn test_buy_province_over_gold() {
-        let c_exploration = 2.0;
-        let mut rng = SmallRng::seed_from_u64(1);
-        let state = StateBuilder::new()
-            .with_hand(&[(Gold, 2), (Silver, 1)])
-            .with_draw(&[])
-            .with_kingdom(&[
-                (Copper, 5),
-                (Silver, 5),
-                (Gold, 5),
-                (Estate, 5),
-                (Duchy, 5),
-                (Province, 5),
-            ])
-            .with_win_conditions(&[WinCondition::VictoryPoints(5)])
-            .build(&mut rng);
-        assert_eq!(state.is_terminal(), None);
-        let mut mcts = MCTS::new(GAME_METADATA, state, rng);
-
-        while mcts.root_visit_count() < 100 {
-            mcts.on_received_nn_est(NNEst::new_from_ply(3, MCTS::UNIFORM_POLICY), c_exploration);
-        }
-
-        // End action phase
-        assert_gt!(mcts.policy().value_for_action(Action::EndPhase), 0.99);
-        mcts.make_random_move(0.0, c_exploration);
-
-        // Buy province
-        assert_gt!(mcts.policy().value_for_action(Action::Buy(Province)), 0.99);
-        mcts.make_random_move(0.0, c_exploration);
-        assert_eq!(mcts.root.borrow().state.is_terminal(), Some(0));
-    }
-
-    #[test]
-    fn test_play_smithy_with_low_gold_chance() {
-        let c_exploration = 2.0;
-        let mut rng = SmallRng::seed_from_u64(1);
-        let state = StateBuilder::new()
-            .with_discard(&[])
-            .with_draw(&[(Copper, 10), (Gold, 1)])
-            .with_hand(&[(Smithy, 1), (Copper, 4)])
-            .with_kingdom(&[(Copper, 5), (Gold, 5), (Smithy, 5), (Province, 1)])
-            .with_win_conditions(&[WinCondition::VictoryPoints(6)])
-            .build(&mut rng);
-        assert_eq!(state.is_terminal(), None);
-        let mut mcts = MCTS::new(GAME_METADATA, state, rng);
-
-        while mcts.root_visit_count() < 1000 {
-            mcts.on_received_nn_est(NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY), c_exploration);
-        }
-
-        // Should play Smithy even with low chance of drawing Gold
-        assert_gt!(mcts.policy().value_for_action(Action::Play(Smithy)), 0.99);
-        mcts.make_random_move(0.0, c_exploration);
-    }
 
     #[test]
     fn test_terminal_q_value() {
@@ -471,5 +351,191 @@ mod tests {
             .build(&mut rng);
         let node = Node::new(Weak::new(), terminal_state, 0.0);
         assert_eq!(node.get_terminal_q_value(), Some(0.0));
+    }
+
+    /// If we can buy an estate to win, we should do so.
+    #[test]
+    fn test_obvious_win_buy_estate() {
+        assert_mcts_sequence(
+            MCTSTestConfig {
+                hand: &[(Copper, 5)],
+                kingdom: &[(Copper, 1), (Estate, 1)],
+                win_condition: WinCondition::VictoryPoints(1),
+                ..Default::default()
+            },
+            &[
+                ShouldPlay(Action::EndPhase),
+                ShouldPlay(Action::Buy(Estate)),
+                IsTerminal(0),
+            ],
+        );
+    }
+
+    /// If we can buy a Gold, Silver, and Copper, we should buy Gold.
+    #[test]
+    fn test_obvious_win_buy_gold() {
+        assert_mcts_sequence(
+            MCTSTestConfig {
+                hand: &[(Copper, 4), (Silver, 1)],
+                kingdom: &[(Copper, 5), (Silver, 5), (Gold, 5), (Province, 1)],
+                win_condition: WinCondition::VictoryPoints(6),
+                ..Default::default()
+            },
+            &[
+                ShouldPlay(Action::EndPhase),
+                ShouldPlay(Action::Buy(Gold)),
+                CannotPlay(Action::Buy(Province)),
+            ],
+        );
+    }
+
+    /// If we can buy a province and gold and the win target is 5vp, we should buy the province.
+    #[test]
+    fn test_buy_province_over_gold() {
+        assert_mcts_sequence(
+            MCTSTestConfig {
+                hand: &[(Gold, 2), (Silver, 1)],
+                kingdom: &[
+                    (Copper, 5),
+                    (Silver, 5),
+                    (Gold, 5),
+                    (Estate, 5),
+                    (Duchy, 5),
+                    (Province, 5),
+                ],
+                win_condition: WinCondition::VictoryPoints(5),
+                ..Default::default()
+            },
+            &[
+                ShouldPlay(Action::EndPhase),
+                ShouldPlay(Action::Buy(Province)),
+                IsTerminal(0),
+            ],
+        );
+    }
+
+    #[test]
+    fn test_play_smithy_with_low_gold_chance() {
+        assert_mcts_sequence(
+            MCTSTestConfig {
+                hand: &[(Smithy, 1), (Copper, 4)],
+                kingdom: &[(Copper, 5), (Gold, 5), (Smithy, 5), (Province, 1)],
+                win_condition: WinCondition::VictoryPoints(6),
+                draw: &[(Copper, 10), (Gold, 1)],
+                iterations: 1000,
+                ..Default::default()
+            },
+            &[ExpectedOutcome::ShouldPlay(Action::Play(Smithy))],
+        );
+    }
+
+    #[test]
+    fn test_village_smithy_sequence() {
+        assert_mcts_sequence(
+            MCTSTestConfig {
+                hand: &[(Village, 1), (Smithy, 1), (Copper, 2)],
+                draw: &[(Copper, 5), (Gold, 1)],
+                kingdom: &[(Gold, 5), (Village, 5), (Smithy, 5), (Province, 1)],
+                win_condition: WinCondition::VictoryPoints(6),
+                iterations: 100,
+                ..Default::default()
+            },
+            &[
+                ShouldPlay(Action::Play(Village)),
+                ShouldPlay(Action::Play(Smithy)),
+                ShouldPlay(Action::EndPhase),
+                ShouldPlay(Action::Buy(Province)),
+                IsTerminal(0),
+            ],
+        );
+    }
+
+    impl MCTS {
+        fn policy(&self) -> Policy {
+            self.root.borrow().policy_logprobs().exp()
+        }
+    }
+
+    #[derive(Debug)]
+    enum ExpectedOutcome {
+        // Asserts policy strongly favors this action (>0.99)
+        ShouldPlay(Action),
+        // Asserts we've reached a terminal state with given ply
+        IsTerminal(u8),
+        // Asserts an action cannot be played
+        CannotPlay(Action),
+    }
+
+    struct MCTSTestConfig<'a> {
+        hand: &'a [(Card, u8)],
+        kingdom: &'a [(Card, u8)],
+        win_condition: WinCondition,
+        draw: &'a [(Card, u8)],
+        discard_pile: &'a [(Card, u8)],
+        iterations: usize,
+    }
+
+    impl<'a> Default for MCTSTestConfig<'a> {
+        fn default() -> Self {
+            Self {
+                hand: &[],
+                kingdom: &[],
+                win_condition: WinCondition::VictoryPoints(1),
+                draw: &[],
+                discard_pile: &[],
+                iterations: 100,
+            }
+        }
+    }
+
+    /// Helper to run MCTS tests with a cleaner syntax
+    fn assert_mcts_sequence(config: MCTSTestConfig, expected: &[ExpectedOutcome]) {
+        let c_exploration = 2.0;
+        let mut rng = SmallRng::seed_from_u64(1);
+
+        let state = StateBuilder::new()
+            .with_hand(config.hand)
+            .with_draw(config.draw)
+            .with_discard(config.discard_pile)
+            .with_kingdom(config.kingdom)
+            .with_win_conditions(&[config.win_condition])
+            .build(&mut rng);
+
+        let mut mcts = MCTS::new(GAME_METADATA, state, rng);
+
+        for outcome in expected {
+            // Run MCTS until we have enough visits
+            while mcts.root_visit_count() < config.iterations {
+                mcts.on_received_nn_est(
+                    NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY),
+                    c_exploration,
+                );
+            }
+
+            match outcome {
+                ShouldPlay(action) => {
+                    assert_gt!(
+                        mcts.policy().value_for_action(*action),
+                        0.99,
+                        "Expected MCTS to strongly prefer action {}, but policy value was only {}",
+                        action,
+                        mcts.policy().value_for_action(*action)
+                    );
+                    mcts.make_random_move(0.0, c_exploration);
+                }
+                IsTerminal(expected_ply) => {
+                    assert_eq!(
+                        mcts.root.borrow().state.is_terminal(),
+                        Some(*expected_ply),
+                        "Expected game to be terminal at ply {}, but was {:?}",
+                        expected_ply,
+                        mcts.root.borrow().state.is_terminal()
+                    );
+                }
+                CannotPlay(action) => {
+                    assert_can_play_action(&mcts.root.borrow().state, *action, false);
+                }
+            }
+        }
     }
 }

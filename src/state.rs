@@ -294,6 +294,10 @@ impl State {
                     Smithy => {
                         next.draw(3, rng);
                     }
+                    Village => {
+                        next.unspent_actions += 2;
+                        next.draw(1, rng);
+                    }
                     _ => panic!("Cannot play card {}", card.name()),
                 }
             }

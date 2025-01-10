@@ -145,6 +145,13 @@ define_cards! {
         victory: 0,
         is_action: true,
     },
+    Village: {
+        short_name: "V",
+        cost: 3,
+        treasure: 0,
+        victory: 0,
+        is_action: true,
+    },
 }
 
 #[cfg(test)]
