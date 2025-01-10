@@ -1,3 +1,12 @@
+# Immediate plan
+- [ ] Add curse (requires u8 to i8 changes)
+- [ ] Create new token-sequence-based representation for state
+   - [ ] Write proptest that verifies that state <-> tokens <-> state transform is consistent
+- [ ] Figure out how to add continuous count embeddings to the transformer
+- [ ] Add Province and 3-Pile win conditions
+- [ ] Develop system for multi-stage card effects (e.g. Sentry, Remodel, etc.)
+
+# Medium-term plan
 We begin by solving simplified versions of the game and gradually increase the complexity.
 
 ## Simplified Dominion
