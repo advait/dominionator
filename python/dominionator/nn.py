@@ -137,8 +137,9 @@ class DominionatorModel(pl.LightningModule):
         ply_loss = F.mse_loss(forward.ply1_log_neg, batch.ply1_log_neg_target)
         policy_loss = F.kl_div(
             forward.policy_logprobs,
-            batch.policy_target_logprobs,
-            log_target=True,
+            # Convert logprobs to probs so that -Inf converts to prob of 0 (to avoid NaNs)
+            batch.policy_target_logprobs.exp(),
+            log_target=False,
             reduction="batchmean",
         )
         total_loss = ply_loss + policy_loss
