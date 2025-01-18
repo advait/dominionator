@@ -28,34 +28,6 @@ macro_rules! define_enum_with_variant_count {
             ];
         }
     };
-
-    (
-        $vis:vis enum $name:ident {
-            $( $variant:ident(f32) ),* $(,)?
-        }
-    ) => {
-        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-        $vis enum $name {
-            $( $variant ),*
-        }
-
-        impl $name {
-            pub const N_VARIANTS: usize = {
-                let mut count = 0;
-                $(
-                    let _ = stringify!($variant);
-                    count += 1;
-                )*
-                count
-            };
-
-            pub const ALL: [Self; Self::N_VARIANTS] = [
-                $(
-                    Self::$variant,
-                )*
-            ];
-        }
-    };
 }
 
 define_enum_with_variant_count! {
@@ -107,45 +79,15 @@ impl DiscreteCount {
     }
 }
 
-define_enum_with_variant_count! {
-    pub enum ContinuousCount {
-        N(f32),
-        LogN(f32),
-        P(f32),
-        LogP(f32),
-    }
-}
-
-impl ContinuousCount {
-    pub fn from_counts(_count: u8, _total: u8) -> [Embedding; 4] {
-        // TODO: Fix issue with f32 values not being able to implement Eq/Hash
-        // let n = count as f32;
-        // let total = total as f32;
-        // let p = n / total;
-        // [
-        //     Embedding::ContinuousCount(ContinuousCount::N(n)),
-        //     Embedding::ContinuousCount(ContinuousCount::P(p)),
-        //     Embedding::ContinuousCount(ContinuousCount::LogN(n.ln())),
-        //     Embedding::ContinuousCount(ContinuousCount::LogP(p.ln())),
-        // ]
-        [
-            Embedding::Padding,
-            Embedding::Padding,
-            Embedding::Padding,
-            Embedding::Padding,
-        ]
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Embedding {
     Padding,
     Card(Card),
     PileType(PileType),
     DiscreteCount(DiscreteCount),
-    ContinuousCount(ContinuousCount),
 }
 
+/// The number of embeddings per token (card, pile type, discrete count)
 pub const N_EMBEDDINGS_PER_TOKEN: usize = 7;
 
 pub type Token = [Embedding; N_EMBEDDINGS_PER_TOKEN];
@@ -154,7 +96,6 @@ pub trait TokenExt: Sized {
     fn get_pile_type(&self) -> Option<PileType>;
     fn get_card(&self) -> Option<Card>;
     fn get_discrete_count(&self) -> Option<DiscreteCount>;
-    fn get_continuous_count(&self) -> Option<ContinuousCount>;
     fn to_token_indices(tokens: &[Self]) -> Vec<[usize; N_EMBEDDINGS_PER_TOKEN]>;
     fn from_token_indices(indices: &[[usize; N_EMBEDDINGS_PER_TOKEN]]) -> Vec<Self>;
 }
@@ -177,13 +118,6 @@ impl TokenExt for Token {
     fn get_discrete_count(&self) -> Option<DiscreteCount> {
         self.iter().find_map(|&e| match e {
             Embedding::DiscreteCount(c) => Some(c),
-            _ => None,
-        })
-    }
-
-    fn get_continuous_count(&self) -> Option<ContinuousCount> {
-        self.iter().find_map(|&e| match e {
-            Embedding::ContinuousCount(c) => Some(c),
             _ => None,
         })
     }
@@ -220,13 +154,13 @@ impl Embedding {
     pub const N_EMBEDDINGS: usize = 1 // Padding
         + Card::N_CARDS
         + PileType::N_VARIANTS
-        + DiscreteCount::N_VARIANTS
-        + ContinuousCount::N_VARIANTS;
+        + DiscreteCount::N_VARIANTS;
 
     pub const ALL: [Self; Self::N_EMBEDDINGS] = {
         let mut embeddings = [Self::Padding; Self::N_EMBEDDINGS];
 
         // idx=0 is reserved for padding
+        embeddings[0] = Self::Padding;
         let mut idx = 1;
 
         // Add Card embeddings
@@ -249,14 +183,6 @@ impl Embedding {
         i = 0;
         while i < DiscreteCount::N_VARIANTS {
             embeddings[idx] = Self::DiscreteCount(DiscreteCount::ALL[i]);
-            idx += 1;
-            i += 1;
-        }
-
-        // Add ContinuousCount embeddings
-        i = 0;
-        while i < ContinuousCount::N_VARIANTS {
-            embeddings[idx] = Self::ContinuousCount(ContinuousCount::ALL[i]);
             idx += 1;
             i += 1;
         }
@@ -339,7 +265,6 @@ mod tests {
     fn test_variant_counts() {
         assert_eq!(PileType::N_VARIANTS, 4);
         assert_eq!(DiscreteCount::N_VARIANTS, 14);
-        assert_eq!(ContinuousCount::N_VARIANTS, 4);
     }
 
     #[test]

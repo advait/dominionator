@@ -108,7 +108,7 @@ impl MCTS {
             .as_ref()
             .expect("apply_action called on leaf with no children")[child_idx]
             .as_ref()
-            .expect("illegal action");
+            .expect(format!("illegal action: {}", action).as_str());
 
         // Eliminate the child's parent reference
         child.borrow_mut().parent = Weak::new();
@@ -266,7 +266,7 @@ impl Node {
             let child_counts = array::from_fn(|i| {
                 children[i]
                     .as_ref()
-                    .map_or(0.0, |child| child.borrow().visit_count as f32)
+                    .map_or(f32::NEG_INFINITY, |child| child.borrow().visit_count as f32)
             });
             child_counts.log_softmax()
         } else {

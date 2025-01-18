@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     cards::Card,
-    embeddings::{ContinuousCount, DiscreteCount, Embedding, PileType, Token},
+    embeddings::{DiscreteCount, Embedding, PileType, Token},
 };
 
 /// A pile is a set of cards with a count.
@@ -125,7 +125,6 @@ impl Pile {
 
     /// Converts the pile into a list of tokens that summarize the pile.
     pub fn to_tokens(&self, pile_type: PileType) -> Vec<Token> {
-        let total = self.len();
         self.iter()
             .map(|(card, count)| {
                 [
@@ -134,7 +133,6 @@ impl Pile {
                     Embedding::DiscreteCount(DiscreteCount::from_count(count)),
                 ]
                 .into_iter()
-                .chain(ContinuousCount::from_counts(count, total))
                 .collect::<Token>()
             })
             .collect()
