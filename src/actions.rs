@@ -1,149 +1,61 @@
-use crate::cards::Card;
-use std::fmt::Display;
+use std::{array, fmt::Display};
 
-macro_rules! define_actions {
-    (
-        simple_actions: [ $($simple:ident),* $(,)? ],
-        card_actions: [ $($action:ident(Card)),* $(,)? ],
-    ) => {
-        #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-        pub enum Action {
-            $($simple,)*
-            $($action(Card),)*
-        }
+use crate::{cards::Card, pile::Pile};
 
-        impl Action {
-            pub const fn name(&self) -> &'static str {
-                match self {
-                    $(Self::$simple => stringify!($simple),)*
-                    $(Self::$action(_) => stringify!($action),)*
-                }
-            }
-
-            pub const N_ACTIONS: usize = {
-                let n_simple = [$($simple),*].len();
-                let n_card_specific = [$($action),*].len() * Card::N_CARDS;
-                n_simple + n_card_specific
-            };
-
-            pub const ALL: [Action; Self::N_ACTIONS] = {
-                let mut actions = [Action::EndPhase; Self::N_ACTIONS];
-                let mut idx = 0;
-
-                // Add simple actions
-                $(
-                    actions[idx] = Action::$simple;
-                    idx += 1;
-                )*
-
-                // Add card-specific actions
-                let mut card_idx = 0;
-                while card_idx < Card::N_CARDS {
-                    $(
-                        actions[idx] = Action::$action(Card::ALL[card_idx]);
-                        idx += 1;
-                    )*
-                    card_idx += 1;
-                }
-
-                assert!(
-                    idx == Self::N_ACTIONS,
-                    "Not all actions were initialized"
-                );
-
-                actions
-            };
-
-            pub const fn to_idx(&self) -> usize {
-                match *self {
-                    $(Self::$simple => 0,)*
-                    Self::Play(card) => 1 + card.to_idx() * 3 + 0,
-                    Self::Trash(card) => 1 + card.to_idx() * 3 + 1,
-                    Self::Buy(card) => 1 + card.to_idx() * 3 + 2,
-                }
-            }
-
-            pub const fn from_idx(idx: usize) -> Option<Self> {
-                if idx < Self::N_ACTIONS {
-                    Some(Self::ALL[idx])
-                } else {
-                    None
-                }
-            }
-        }
-
-        impl Display for Action {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-                match self {
-                    $(Self::$simple => write!(f, "{}", stringify!($simple)),)*
-                    $(Self::$action(card) => write!(f, "{}({})", stringify!($action), card),)*
-                }
-            }
-        }
-    };
+/// An action that can be played in the game of Dominion.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
+pub enum Action {
+    /// Ends the current phase.
+    EndPhase,
+    /// Selects a card from the kingdom. The operation performed depends on the phase of the game.
+    SelectCard(Card),
+    /// Padding action (never playable) exist in case the number of kingdom cards is lower than 17
+    Padding,
 }
 
-use Action::*;
+impl Action {
+    pub const N_ACTIONS: usize = 1 + Pile::MAX_UNIQUE_CARDS;
 
-define_actions! {
-    simple_actions: [
-        EndPhase,
-    ],
-    card_actions: [
-        Play(Card),
-        Trash(Card),
-        Buy(Card),
-    ],
+    /// Returns the index of the action in the policy vector.
+    pub fn to_idx(&self, kingdom: &Pile) -> usize {
+        match self {
+            Action::EndPhase => 0,
+            Action::SelectCard(card) => kingdom.index_of(*card) + 1,
+            Action::Padding => panic!("Padding action should not be indexed"),
+        }
+    }
+
+    /// Returns the action corresponding to the given index.
+    pub fn from_idx(idx: usize, kingdom: &Pile) -> Self {
+        if idx == 0 {
+            Action::EndPhase
+        } else {
+            Action::SelectCard(kingdom.card_at_index(idx - 1))
+        }
+    }
+
+    /// Returns an array of all possible actions, ordered by the index of the action in the
+    /// policy vector.
+    pub fn all<'a>(kingdom: &'a Pile) -> [Self; Action::N_ACTIONS] {
+        let n_kingdom_cards = kingdom.unique_card_count();
+        array::from_fn(|i| {
+            if i == 0 {
+                Action::EndPhase
+            } else if (i - 1) < n_kingdom_cards {
+                Action::SelectCard(kingdom.card_at_index(i - 1))
+            } else {
+                Action::Padding
+            }
+        })
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::cards::{Card::*, *};
-
-    #[test]
-    fn test_action_indices() {
-        // Test that indices are sequential and reversible
-        for (i, action) in Action::ALL.iter().enumerate() {
-            assert_eq!(action.to_idx(), i);
-            assert_eq!(Action::from_idx(i), Some(*action));
+impl Display for Action {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Action::EndPhase => write!(f, "EndPhase"),
+            Action::SelectCard(card) => write!(f, "SelectCard({})", card),
+            Action::Padding => write!(f, "Padding"),
         }
-
-        // Test out of bounds
-        assert_eq!(Action::from_idx(Action::N_ACTIONS), None);
-    }
-
-    #[test]
-    fn test_action_display() {
-        assert_eq!(Action::EndPhase.to_string(), "EndPhase");
-        assert_eq!(Action::Play(Silver).to_string(), "Play(S)");
-        assert_eq!(Action::Buy(Copper).to_string(), "Buy(C)");
-        assert_eq!(Action::Trash(Gold).to_string(), "Trash(G)");
-    }
-
-    #[test]
-    fn test_card_specific_actions() {
-        // Verify that we have the right number of actions
-        let expected_actions = 1 + // EndPhase
-            (3 * Card::N_CARDS); // Buy/Play/Trash for each card
-        assert_eq!(Action::N_ACTIONS, expected_actions);
-
-        // Verify that each card-specific action exists exactly once
-        let count_buy = Action::ALL
-            .into_iter()
-            .filter(|action| matches!(action, Action::Buy(_)))
-            .count();
-        let count_play = Action::ALL
-            .into_iter()
-            .filter(|action| matches!(action, Action::Play(_)))
-            .count();
-        let count_trash = Action::ALL
-            .into_iter()
-            .filter(|action| matches!(action, Action::Trash(_)))
-            .count();
-
-        assert_eq!(count_buy, Card::N_CARDS);
-        assert_eq!(count_play, Card::N_CARDS);
-        assert_eq!(count_trash, Card::N_CARDS);
     }
 }

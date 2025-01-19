@@ -1,4 +1,6 @@
-use crate::actions::Action;
+use std::array;
+
+use crate::{actions::Action, pile::Pile};
 
 pub type Policy = [f32; Action::N_ACTIONS];
 
@@ -7,7 +9,7 @@ pub trait PolicyExt {
     fn from_iter<T: IntoIterator<Item = f32>>(iter: T) -> Self;
 
     /// Returns the value of the policy for a given action.
-    fn value_for_action(&self, action: Action) -> f32;
+    fn value_for_action(&self, action: Action, kingdom: &Pile) -> f32;
 
     /// Applies log softmax to the policy logits returning a policy in logprob space.
     fn log_softmax(&self) -> Policy;
@@ -20,17 +22,19 @@ pub trait PolicyExt {
     fn exp(&self) -> Policy;
 }
 
+pub const UNIFORM_POLICY: Policy = [1.0 / Action::N_ACTIONS as f32; Action::N_ACTIONS];
+
 impl PolicyExt for Policy {
     fn from_iter<T: IntoIterator<Item = f32>>(iter: T) -> Self {
-        let mut policy = [0.0; Action::N_ACTIONS];
-        for (i, p) in iter.into_iter().enumerate() {
-            policy[i] = p;
+        let vec = iter.into_iter().collect::<Vec<_>>();
+        if vec.len() != Action::N_ACTIONS {
+            panic!("Policy has incorrect number of items: {}", vec.len());
         }
-        policy
+        array::from_fn(|i| vec[i])
     }
 
-    fn value_for_action(&self, action: Action) -> f32 {
-        self[action.to_idx()]
+    fn value_for_action(&self, action: Action, kingdom: &Pile) -> f32 {
+        self[action.to_idx(kingdom)]
     }
 
     fn log_softmax(&self) -> Policy {

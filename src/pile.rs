@@ -19,6 +19,17 @@ pub struct Pile {
 }
 
 impl Pile {
+    /// The maximum number of unique cards in a pile. In a conventional game this corresponds to
+    /// Copper, Silver, Gold, Estate, Duchy, Province, Curse, and the 10 kingdom cards.
+    pub const MAX_UNIQUE_CARDS: usize = 17;
+
+    fn new(counts: BTreeMap<Card, u8>) -> Self {
+        if counts.len() > Self::MAX_UNIQUE_CARDS {
+            panic!("Pile has too many unique cards: {}", counts.len());
+        }
+        Self { counts }
+    }
+
     /// Creates a new Pile with all the cards from the kingdom but with a count of 0.
     pub fn from_kingdom(kingdom: &Pile) -> Self {
         kingdom.iter().map(|(card, _count)| (card, 0)).collect()
@@ -58,6 +69,23 @@ impl Pile {
     /// Returns true if the pile contains no cards.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
+    }
+
+    /// Returns the index of the given card in the pile.
+    pub fn index_of(&self, card: Card) -> usize {
+        self.counts
+            .iter()
+            .position(|(c, _)| *c == card)
+            .expect("Card not present in pile")
+    }
+
+    /// Returns the card at the given index.
+    pub fn card_at_index(&self, index: usize) -> Card {
+        self.counts
+            .keys()
+            .nth(index)
+            .expect("Index out of bounds")
+            .clone()
     }
 
     /// Takes a card from the pile, returning the remining count of the card in the pile.
@@ -163,17 +191,13 @@ impl Display for Pile {
 
 impl FromIterator<(Card, u8)> for Pile {
     fn from_iter<T: IntoIterator<Item = (Card, u8)>>(iter: T) -> Self {
-        Self {
-            counts: BTreeMap::from_iter(iter),
-        }
+        Self::new(BTreeMap::from_iter(iter))
     }
 }
 
 impl FromIterator<Card> for Pile {
     fn from_iter<T: IntoIterator<Item = Card>>(iter: T) -> Self {
-        Self {
-            counts: BTreeMap::from_iter(iter.into_iter().map(|card| (card, 1))),
-        }
+        Self::new(BTreeMap::from_iter(iter.into_iter().map(|card| (card, 1))))
     }
 }
 

@@ -203,25 +203,23 @@ impl State {
     /// For each possible action, returns a tuple of the action and whether it is valid or not.
     pub fn valid_actions(&self) -> [(Action, bool); Action::N_ACTIONS] {
         match self.turn_phase {
-            TurnPhase::ActionPhase => Action::ALL.map(|action| match action {
+            TurnPhase::ActionPhase => Action::all(&self.kingdom).map(|action| match action {
                 Action::EndPhase => (action, true),
-                Action::Play(card) => (
+                Action::SelectCard(card) => (
                     action,
-                    card.is_action() && self.hand[card] > 0 && self.unspent_actions > 0,
+                    self.unspent_actions > 0 && card.is_action() && self.hand[card] > 0,
                 ),
-                Action::Trash(_) => (action, false),
-                Action::Buy(_) => (action, false),
+                Action::Padding => (action, false),
             }),
-            TurnPhase::BuyPhase => Action::ALL.map(|action| match action {
+            TurnPhase::BuyPhase => Action::all(&self.kingdom).map(|action| match action {
                 Action::EndPhase => (action, true),
-                Action::Play(_) => (action, false),
-                Action::Trash(_) => (action, false),
-                Action::Buy(card) => (
+                Action::SelectCard(card) => (
                     action,
-                    self.unspent_gold >= card.cost()
-                        && self.unspent_buys > 0
+                    self.unspent_buys > 0
+                        && self.unspent_gold >= card.cost()
                         && self.kingdom[card] > 0,
                 ),
+                Action::Padding => (action, false),
             }),
         }
     }
@@ -264,13 +262,31 @@ impl State {
     /// Applies an action to the state returning the resulting state.
     pub fn apply_action(&self, action: Action, rng: &mut SmallRng) -> Self {
         let mut next = self.clone();
-        match action {
-            Action::EndPhase => match next.turn_phase {
-                TurnPhase::ActionPhase => {
+        match next.turn_phase {
+            TurnPhase::ActionPhase => match action {
+                Action::EndPhase => {
                     next.turn_phase = TurnPhase::BuyPhase;
                 }
-                TurnPhase::BuyPhase => {
-                    // When buy phaase is over, perform cleanup
+                Action::SelectCard(card) => {
+                    next.unspent_actions -= 1;
+                    next.hand.take(card);
+                    next.discard.push(card);
+                    match card {
+                        Smithy => {
+                            next.draw(3, rng);
+                        }
+                        Village => {
+                            next.unspent_actions += 2;
+                            next.draw(1, rng);
+                        }
+                        _ => panic!("Cannot play card {}", card.name()),
+                    }
+                }
+                Action::Padding => panic!("Padding action should not be played"),
+            },
+            TurnPhase::BuyPhase => match action {
+                Action::EndPhase => {
+                    // When buy phase is over, perform cleanup
                     next.turn_phase = TurnPhase::ActionPhase;
                     next.ply += 1;
 
@@ -285,29 +301,14 @@ impl State {
                     // Draw new hand
                     next.draw(Self::HAND_SIZE, rng);
                 }
-            },
-            Action::Play(card) => {
-                next.unspent_actions -= 1;
-                next.hand.take(card);
-                next.discard.push(card);
-                match card {
-                    Smithy => {
-                        next.draw(3, rng);
-                    }
-                    Village => {
-                        next.unspent_actions += 2;
-                        next.draw(1, rng);
-                    }
-                    _ => panic!("Cannot play card {}", card.name()),
+                Action::SelectCard(card) => {
+                    next.kingdom.take(card);
+                    next.unspent_gold -= card.cost();
+                    next.unspent_buys -= 1;
+                    next.discard.push(card);
                 }
-            }
-            Action::Trash(_) => unimplemented!(),
-            Action::Buy(card) => {
-                next.kingdom.take(card);
-                next.unspent_gold -= card.cost();
-                next.unspent_buys -= 1;
-                next.discard.push(card);
-            }
+                Action::Padding => panic!("Padding action should not be played"),
+            },
         }
         next
     }
@@ -335,8 +336,9 @@ pub mod tests {
         assert_eq!(
             state.can_play_action(action),
             can_play,
-            "Attempting to play invalid action {}",
-            action
+            "Attempting to play invalid action {}. Valid actions: {:?}",
+            action,
+            state.valid_actions(),
         );
     }
 
@@ -344,7 +346,9 @@ pub mod tests {
         #[test]
         fn test_sanity(seed in 0..u64::MAX) {
             let mut rng = SmallRng::seed_from_u64(seed);
-            let state = StateBuilder::new().build(&mut rng);
+            let state = StateBuilder::new()
+                .with_kingdom(&[(Copper, 10), (Estate, 10)])
+                .build(&mut rng);
             assert_eq!(state.ply, 0);
             assert_eq!(state.hand.len(), 5);
             assert_eq!(state.draw.len(), 5);
@@ -379,14 +383,14 @@ pub mod tests {
             assert_eq!(state.turn_phase, TurnPhase::BuyPhase);
 
             // Buy a copper
-            assert_can_play_action(&state, Action::Buy(Copper), true);
-            let state = state.apply_action(Action::Buy(Copper), &mut rng);
+            assert_can_play_action(&state, Action::SelectCard(Copper), true);
+            let state = state.apply_action(Action::SelectCard(Copper), &mut rng);
             assert_eq!(state.unspent_gold, unspent_gold - Copper.cost());
             assert!(state.discard.contains(Copper));
 
             // Can't buy additional cards
-            assert_can_play_action(&state, Action::Buy(Copper), false);
-            assert_can_play_action(&state, Action::Buy(Estate), false);
+            assert_can_play_action(&state, Action::SelectCard(Copper), false);
+            assert_can_play_action(&state, Action::SelectCard(Estate), false);
 
             // End turn
             assert_can_play_action(&state, Action::EndPhase, true);
@@ -414,14 +418,14 @@ pub mod tests {
             assert_eq!(state.turn_phase, TurnPhase::BuyPhase);
 
             // Buy an estate
-            assert_can_play_action(&state, Action::Buy(Estate), true);
-            let state = state.apply_action(Action::Buy(Estate), &mut rng);
+            assert_can_play_action(&state, Action::SelectCard(Estate), true);
+            let state = state.apply_action(Action::SelectCard(Estate), &mut rng);
             assert_eq!(state.unspent_gold, unspent_gold - Estate.cost());
             assert!(state.discard.contains(Estate));
 
             // Can't buy additional cards
-            assert_can_play_action(&state, Action::Buy(Copper), false);
-            assert_can_play_action(&state, Action::Buy(Estate), false);
+            assert_can_play_action(&state, Action::SelectCard(Copper), false);
+            assert_can_play_action(&state, Action::SelectCard(Estate), false);
 
             // End turn
             assert_can_play_action(&state, Action::EndPhase, true);
@@ -450,10 +454,10 @@ pub mod tests {
                 if state.is_terminal().is_some() {
                     return Ok(());
                 }
-                if state.can_play_action(Action::Buy(Estate)) {
-                    state = state.apply_action(Action::Buy(Estate), &mut rng);
-                } else if state.can_play_action(Action::Buy(Copper)) {
-                    state = state.apply_action(Action::Buy(Copper), &mut rng);
+                if state.can_play_action(Action::SelectCard(Estate)) {
+                    state = state.apply_action(Action::SelectCard(Estate), &mut rng);
+                } else if state.can_play_action(Action::SelectCard(Copper)) {
+                    state = state.apply_action(Action::SelectCard(Copper), &mut rng);
                 }
                 assert_can_play_action(&state, Action::EndPhase, true);
                 state = state.apply_action(Action::EndPhase, &mut rng);

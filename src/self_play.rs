@@ -377,7 +377,7 @@ fn init_progress_bars(n_games: usize) -> (ProgressBar, ProgressBar, ProgressBar)
 pub mod tests {
     use more_asserts::{assert_ge, assert_le};
 
-    use crate::mcts::MCTS;
+    use crate::policy;
 
     use super::*;
 
@@ -390,7 +390,7 @@ pub mod tests {
             params
                 .states
                 .into_iter()
-                .map(|_| NNEst::new_from_ply(3, MCTS::UNIFORM_POLICY))
+                .map(|_| NNEst::new_from_ply(3, policy::UNIFORM_POLICY))
                 .collect()
         }
     }

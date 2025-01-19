@@ -9,7 +9,7 @@ use rand::{distributions::WeightedIndex, prelude::Distribution, rngs::SmallRng};
 
 use crate::{
     actions::Action,
-    policy::{Policy, PolicyExt},
+    policy::{Policy, PolicyExt, UNIFORM_POLICY},
     state::State,
     types::{GameMetadata, GameResult, NNEst, QValue, Sample},
 };
@@ -34,8 +34,6 @@ pub struct MCTS {
 unsafe impl Send for MCTS {}
 
 impl MCTS {
-    pub const UNIFORM_POLICY: Policy = [1.0 / Action::N_ACTIONS as f32; Action::N_ACTIONS];
-
     pub fn new(metadata: GameMetadata, state: State, rng: SmallRng) -> Self {
         let root = Rc::new(RefCell::new(Node::new(Weak::new(), state, 0.0)));
         Self {
@@ -101,7 +99,7 @@ impl MCTS {
     pub fn make_move(&mut self, action: Action, c_exploration: f32) {
         let original_root_node = Rc::clone(&self.root);
         let root = self.root.borrow_mut();
-        let child_idx = action.to_idx();
+        let child_idx = action.to_idx(&root.state.kingdom);
 
         let child = root
             .children
@@ -137,7 +135,7 @@ impl MCTS {
             .apply_temperature(temperature)
             .exp();
         let dist = WeightedIndex::new(policy).unwrap();
-        let action = Action::ALL[dist.sample(&mut self.rng)];
+        let action = Action::all(&self.root.borrow().state.kingdom)[dist.sample(&mut self.rng)];
         self.make_move(action, c_exploration);
     }
 
@@ -270,7 +268,7 @@ impl Node {
             });
             child_counts.log_softmax()
         } else {
-            MCTS::UNIFORM_POLICY
+            UNIFORM_POLICY
         }
     }
 
@@ -312,7 +310,8 @@ impl Node {
 #[cfg(test)]
 mod tests {
     use crate::{
-        cards::{Card, Card::*},
+        cards::Card::{self, *},
+        policy,
         state::{tests::assert_can_play_action, StateBuilder, WinCondition},
         types::NNEst,
     };
@@ -365,7 +364,7 @@ mod tests {
             },
             &[
                 ShouldPlay(Action::EndPhase),
-                ShouldPlay(Action::Buy(Estate)),
+                ShouldPlay(Action::SelectCard(Estate)),
                 IsTerminal(0),
             ],
         );
@@ -383,8 +382,8 @@ mod tests {
             },
             &[
                 ShouldPlay(Action::EndPhase),
-                ShouldPlay(Action::Buy(Gold)),
-                CannotPlay(Action::Buy(Province)),
+                ShouldPlay(Action::SelectCard(Gold)),
+                CannotPlay(Action::SelectCard(Province)),
             ],
         );
     }
@@ -408,7 +407,7 @@ mod tests {
             },
             &[
                 ShouldPlay(Action::EndPhase),
-                ShouldPlay(Action::Buy(Province)),
+                ShouldPlay(Action::SelectCard(Province)),
                 IsTerminal(0),
             ],
         );
@@ -425,7 +424,7 @@ mod tests {
                 iterations: 1000,
                 ..Default::default()
             },
-            &[ExpectedOutcome::ShouldPlay(Action::Play(Smithy))],
+            &[ExpectedOutcome::ShouldPlay(Action::SelectCard(Smithy))],
         );
     }
 
@@ -441,10 +440,10 @@ mod tests {
                 ..Default::default()
             },
             &[
-                ShouldPlay(Action::Play(Village)),
-                ShouldPlay(Action::Play(Smithy)),
+                ShouldPlay(Action::SelectCard(Village)),
+                ShouldPlay(Action::SelectCard(Smithy)),
                 ShouldPlay(Action::EndPhase),
-                ShouldPlay(Action::Buy(Province)),
+                ShouldPlay(Action::SelectCard(Province)),
                 IsTerminal(0),
             ],
         );
@@ -507,7 +506,7 @@ mod tests {
             // Run MCTS until we have enough visits
             while mcts.root_visit_count() < config.iterations {
                 mcts.on_received_nn_est(
-                    NNEst::new_from_ply(2, MCTS::UNIFORM_POLICY),
+                    NNEst::new_from_ply(2, policy::UNIFORM_POLICY),
                     c_exploration,
                 );
             }
@@ -515,11 +514,13 @@ mod tests {
             match outcome {
                 ShouldPlay(action) => {
                     assert_gt!(
-                        mcts.policy().value_for_action(*action),
+                        mcts.policy()
+                            .value_for_action(*action, &mcts.root.borrow().state.kingdom),
                         0.99,
                         "Expected MCTS to strongly prefer action {}, but policy value was only {}",
                         action,
-                        mcts.policy().value_for_action(*action)
+                        mcts.policy()
+                            .value_for_action(*action, &mcts.root.borrow().state.kingdom)
                     );
                     mcts.make_random_move(0.0, c_exploration);
                 }
